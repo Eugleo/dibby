@@ -1,0 +1,19 @@
+[tool.poetry]
+authors = ["Your Name <you@example.com>"]
+description = ""
+name = "mirek"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "^3.9.0"
+pyteomics = "^4.4.1"
+biopython = "^1.78"
+pandas = "^1.2.3"
+ipython = "^7.21.0"
+pepfrag = "^0.3.0"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core>=1.0.0"]
