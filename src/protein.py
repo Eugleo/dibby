@@ -1,5 +1,5 @@
 import re
-from typing import List
+from typing import List, Set
 
 import pepfrag as p
 import numpy as np
@@ -21,14 +21,15 @@ class Fragment:
         self.mz = mz
         self.name = name
 
-        m = re.match(r"\[?(([by])(\d+)(-([^]]+))?)\]?\[(\d?)\+\]", name)
+        # Neutral loss isn't always loss, sometimes it is addition
+        m = re.match(r"\[?(([byM])(\d*)([-+]([^]]+))?)\]?\[(\d?)\+\]", name)
         if m:
             self.type = m.group(2)
-            self.index = int(m.group(3))
+            self.index = int(m.group(3)) if m.group(3) != "" else None
             self.neutral_loss = m.group(5)
             self.charge = int(m.group(6)) if m.group(6) != "" else 1
         else:
-            raise ValueError("Incorrect fragment name")
+            raise ValueError(f"Incorrect fragment name: {name}")
 
         self.intensity = intensity
 
@@ -71,7 +72,9 @@ OXIDATION_MET = Modification("methionine exodation", 15.9949, "M")
 
 
 class Peptide(p.Peptide):
-    def __init__(self, protein_seq, beginning, end, charge, modifications):
+    def __init__(
+        self, protein_seq, beginning, end, charge, modifications: List[Modification]
+    ):
         if beginning >= end:
             raise AssertionError("Beginning should be strictly less than end")
         self.charge = charge
@@ -81,6 +84,7 @@ class Peptide(p.Peptide):
         self.mods = [
             item for mod in modifications for item in mod.gen_modsites(self.seq)
         ]
+        self.modstr = ", ".join(m.name for m in modifications)
 
         self.mass_type = p.MassType.mono
         self.radical = False
@@ -95,11 +99,13 @@ class Peptide(p.Peptide):
     def __len__(self):
         return len(self.seq)
 
-    def fragment(self, skip_cysteine=False) -> List[Fragment]:
-        if skip_cysteine and "C" in self.seq:
-            if self._noncysteine_fragments is None:
-                seq = np.array(list(self.seq))
-                cysteines = np.nonzero(seq == "C")
+    @property
+    def noncysteine_fragments(self):
+        if self._noncysteine_fragments is None:
+            if "C" not in self.seq:
+                self._noncysteine_fragments = self.fragment()
+            else:
+                cysteines = np.nonzero(np.array(list(self.seq)) == "C")
                 fc, lc = np.min(cysteines), np.max(cysteines)
                 frags = self.fragment()
                 self._noncysteine_fragments = [
@@ -108,37 +114,40 @@ class Peptide(p.Peptide):
                     if (f.type == "b" and f.index <= fc)
                     or (f.type == "y" and f.index > lc)
                 ]
+        return self._noncysteine_fragments
 
-            return self._noncysteine_fragments
-        else:
-            if self._fragments is None:
-                self._fragments = [
-                    Fragment(mz, name=name)
-                    for mz, name, _ in p.Peptide.fragment(
-                        self,
-                        ion_types={
-                            p.IonType.b: ["H2O"],
-                            p.IonType.y: ["NH3"],
-                        },
-                    )
-                ]
-            return self._fragments
+    def fragment(self) -> List[Fragment]:
+        if self._fragments is None:
+            self._fragments = [
+                Fragment(mz, name=name)
+                for mz, name, _ in p.Peptide.fragment(
+                    self,
+                    ion_types={
+                        p.IonType.b: [],
+                        p.IonType.y: [],
+                    },
+                )
+            ]
+            # self._fragments = [f for f in self._fragments if f.charge == 1]
+        return self._fragments
 
-    def fragment_masses(self, skip_cysteine=False):
-        if skip_cysteine and "C" in self.seq:
-            if self._noncysteine_fragment_masses is None:
-                frags = self.fragment(skip_cysteine)
-                self._noncysteine_fragment_masses = np.fromiter(
-                    (f.mz for f in frags), np.float32, count=len(frags)
-                )
-            return self._noncysteine_fragment_masses
-        else:
-            if self._fragment_masses is None:
-                frags = self.fragment(skip_cysteine)
-                self._fragment_masses = np.fromiter(
-                    (f.mz for f in frags), np.float32, count=len(frags)
-                )
-            return self._fragment_masses
+    @property
+    def noncysteine_fragment_masses(self):
+        if self._noncysteine_fragment_masses is None:
+            frags = self.noncysteine_fragments
+            self._noncysteine_fragment_masses = np.fromiter(
+                (f.mz for f in frags), np.float32, count=len(frags)
+            )
+        return self._noncysteine_fragment_masses
+
+    @property
+    def fragment_masses(self):
+        if self._fragment_masses is None:
+            frags = self.fragment()
+            self._fragment_masses = np.fromiter(
+                (f.mz for f in frags), np.float32, count=len(frags)
+            )
+        return self._fragment_masses
 
 
 class Protein:
@@ -146,7 +155,7 @@ class Protein:
         self.sequence = sequence
         self.charge = charge
 
-    def peptides(self, enzyme, maxskip=2):
+    def peptides(self, enzyme, maxskip=2) -> Set[Peptide]:
         peptides = enzyme(self.sequence)
 
         return {

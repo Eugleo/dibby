@@ -11,6 +11,8 @@ biopython = "^1.78"
 pandas = "^1.2.3"
 ipython = "^7.21.0"
 pepfrag = "^0.3.0"
+pyopenms = "^2.6.0"
+lxml = "^4.6.3"
 
 [tool.poetry.dev-dependencies]
 

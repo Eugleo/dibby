@@ -2,7 +2,7 @@ import protein
 import os
 import re
 
-from pyteomics import mgf, mass
+from pyteomics import mgf, mass, mzid
 import numpy as np
 from protein import Peptide
 
@@ -29,8 +29,15 @@ class PeptideMeasurement:
         self.peptide_mass_estimate = peptide_mass_estimate
         nonzero = np.nonzero(fragments_intensity)[0]
         indices = np.argsort(fragments_mz[nonzero])
+
         self.fragments_mz = fragments_mz[nonzero][indices]
         self.fragments_intensity = fragments_intensity[nonzero][indices]
+        self.total_intensity = np.sum(self.fragments_intensity)
+
+        self.masses_padded = np.pad(
+            self.fragments_mz, 1, constant_values=(-np.inf, np.inf)
+        )
+        self.intensities_padded = np.pad(self.fragments_intensity, 1, constant_values=0)
 
     def to_dicts(self):
         for mz, intenzity in zip(self.fragments_mz, self.fragments_intensity):
@@ -51,16 +58,26 @@ class PeptideMeasurement:
         )
         return len(np.where(check)) > 0
 
-    def score_match(self, peptide: Peptide, tolerance=0.02):
-        frags_mz = peptide.fragment_masses(skip_cysteine=True)
-        if len(frags_mz) == 0:
-            return np.nan
-        indices = np.searchsorted(self.fragments_mz, frags_mz, side="right")
-        valid_indices = indices < len(self.fragments_mz)
-        count = np.count_nonzero(
-            (np.abs(self.fragments_mz[indices[valid_indices]] - frags_mz[valid_indices]) <= tolerance)
+    def score_match(self, peptide: Peptide, err_ppm=10, skip_cysteine=False):
+        if skip_cysteine:
+            generated = peptide.noncysteine_fragment_masses
+        else:
+            generated = peptide.fragment_masses
+        t = (err_ppm / 10e6) * generated
+
+        indices = np.searchsorted(self.masses_padded, generated)
+        left = within_tolerance(generated, self.masses_padded[indices - 1], t)
+        right = within_tolerance(generated, self.masses_padded[indices], t)
+        matched_intensities = np.maximum(
+            np.where(left, self.intensities_padded[indices - 1], 0),
+            np.where(right, self.intensities_padded[indices], 0),
         )
-        return count / len(frags_mz)
+
+        return np.sum(matched_intensities) / self.total_intensity
+
+
+def within_tolerance(xs, ys, threshold):
+    return np.abs(xs - ys) <= threshold
 
 
 def read_mgf(path):
@@ -93,3 +110,7 @@ def read_mgf(path):
                 fragments_mz,
                 fragments_intensity,
             )
+
+
+def read_mzid(path):
+    return mzid.DataFrame(path)
