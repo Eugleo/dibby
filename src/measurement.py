@@ -27,7 +27,7 @@ class PeptideMeasurement:
         self.peptide_mz = peptide_mz
         self.peptide_intensity = peptide_intensity
         self.peptide_mass_estimate = peptide_mass_estimate
-        nonzero = np.nonzero(fragments_intensity)[0]
+        nonzero = fragments_intensity >= 0.01 * np.max(fragments_intensity)
         indices = np.argsort(fragments_mz[nonzero])
 
         self.fragments_mz = fragments_mz[nonzero][indices]
@@ -58,26 +58,30 @@ class PeptideMeasurement:
         )
         return len(np.where(check)) > 0
 
-    def score_match(self, peptide: Peptide, err_ppm=10, skip_cysteine=False):
-        if skip_cysteine:
+    def score_match(self, peptide: Peptide, soft_err_ppm=10, hard_err_ppm=50):
+        if peptide.ismerged:
             generated = peptide.noncysteine_fragment_masses
         else:
             generated = peptide.fragment_masses
-        t = (err_ppm / 10e6) * generated
+        soft = (soft_err_ppm / 1e6) * generated
+        hard = (hard_err_ppm / 1e6) * generated
 
         indices = np.searchsorted(self.masses_padded, generated)
-        left = within_tolerance(generated, self.masses_padded[indices - 1], t)
-        right = within_tolerance(generated, self.masses_padded[indices], t)
+        left = tolerance_multiplier(
+            generated, self.masses_padded[indices - 1], soft, hard
+        )
+        right = tolerance_multiplier(generated, self.masses_padded[indices], soft, hard)
         matched_intensities = np.maximum(
-            np.where(left, self.intensities_padded[indices - 1], 0),
-            np.where(right, self.intensities_padded[indices], 0),
+            left * self.intensities_padded[indices - 1],
+            right * self.intensities_padded[indices],
         )
 
         return np.sum(matched_intensities) / self.total_intensity
 
 
-def within_tolerance(xs, ys, threshold):
-    return np.abs(xs - ys) <= threshold
+def tolerance_multiplier(xs, ys, soft, hard):
+    dif = np.abs(xs - ys)
+    return np.where(dif <= soft, 1, 1 - (np.minimum(dif, hard) - soft) / (hard - soft))
 
 
 def read_mgf(path):
