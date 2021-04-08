@@ -9,6 +9,26 @@ from protein import Peptide
 PROTON_MASS = mass.calculate_mass(formula="H").conjugate()
 
 
+def binary_multiplier(tolerance_ppm=10):
+    def multiplier(reference, measurement):
+        bound = (tolerance_ppm / 1e6) * reference
+        return np.where(np.abs(reference - measurement) <= bound, 1, 0)
+
+    return multiplier
+
+
+def linear_decay_multiplier(soft_ppm, hard_ppm):
+    def multiplier(reference, measurement):
+        soft = (soft_ppm / 1e6) * reference
+        hard = (hard_ppm / 1e6) * reference
+        dif = np.abs(reference - measurement)
+        return np.where(
+            dif <= soft, 1, 1 - (np.minimum(dif, hard) - soft) / (hard - soft)
+        )
+
+    return multiplier
+
+
 class PeptideMeasurement:
     def __init__(
         self,
@@ -58,30 +78,23 @@ class PeptideMeasurement:
         )
         return len(np.where(check)) > 0
 
-    def score_match(self, peptide: Peptide, soft_err_ppm=10, hard_err_ppm=50):
+    def score_match(
+        self, peptide: Peptide, multiplier=binary_multiplier(tolerance_ppm=10)
+    ):
         if peptide.ismerged:
             generated = peptide.noncysteine_fragment_masses
         else:
             generated = peptide.fragment_masses
-        soft = (soft_err_ppm / 1e6) * generated
-        hard = (hard_err_ppm / 1e6) * generated
 
         indices = np.searchsorted(self.masses_padded, generated)
-        left = tolerance_multiplier(
-            generated, self.masses_padded[indices - 1], soft, hard
-        )
-        right = tolerance_multiplier(generated, self.masses_padded[indices], soft, hard)
+        left = multiplier(generated, self.masses_padded[indices - 1])
+        right = multiplier(generated, self.masses_padded[indices])
         matched_intensities = np.maximum(
             left * self.intensities_padded[indices - 1],
             right * self.intensities_padded[indices],
         )
 
         return np.sum(matched_intensities) / self.total_intensity
-
-
-def tolerance_multiplier(xs, ys, soft, hard):
-    dif = np.abs(xs - ys)
-    return np.where(dif <= soft, 1, 1 - (np.minimum(dif, hard) - soft) / (hard - soft))
 
 
 def read_mgf(path):

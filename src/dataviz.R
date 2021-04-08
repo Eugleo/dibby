@@ -1,5 +1,5 @@
 library(tidyverse)
-install.packages("gridExtra")
+# install.packages("gridExtra")
 library(gridExtra)
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -117,14 +117,185 @@ while (i <= imax) {
 
 # Matches -----------------------------------------------------------------
 
+sort_by <- function(xs, fun = str_length) {
+  u <- xs %>% unique()
+  l <- u %>%
+    map_dbl(fun) %>%
+    sort(index.return = TRUE)
+  u[l$ix]
+}
+
+pepmod_lvls <- function(peptides, mods, pepmods) {
+  transpose(list(peptides, mods, pepmods)) %>%
+    sort_by(~ str_length(.x[[1]])) %>%
+    map_chr(~ .x[[3]])
+}
+
+isok <- function(peptides) {
+  ((peptides %>% map_dbl(str_length)) > 5) #| (peptides %>% map_lgl(~ str_detect(.x, "C")))
+}
+
 mch <-
-  read_csv("../out/lys_peptide_matches.csv") %>%
-  rename(measurement = X1) %>%
-  pivot_longer(-measurement, names_to = "peptide", values_to = "score") %>%
-  mutate(peptide = factor(peptide, levels=0:max(as.numeric(peptide))))
+  read_csv("../out/lys_analysis_rat.csv") %>%
+  mutate(
+    measurement = measurement + 1,
+    pepmod = if_else(is.na(mod), peptide, paste(peptide, mod, sep = "_"))
+  ) %>%
+  mutate(
+    pepmod = factor(pepmod, levels = pepmod_lvls(peptide, mod, pepmod))
+  )
+
+mch2 <-
+  read_csv("../out/lys_analysis_rat_sqr.csv") %>%
+  mutate(
+    measurement = measurement + 1,
+    pepmod = if_else(is.na(mod), peptide, paste(peptide, mod, sep = "_")),
+    pepid = as.numeric(as.factor(pepmod))
+  ) %>%
+  mutate(
+    pepmod = factor(pepmod, levels = pepmod_lvls(peptide, mod, pepmod))
+  )
+
+# mch2 <-
+#   read_csv("../out/lys_peptide_matches_ultra_new_score.csv") %>%
+#   mutate(
+#     pepmod = if_else(is.na(mod), peptide, paste(peptide, mod, sep = "_"))
+#   ) %>%
+#   mutate(
+#     pepmod = factor(pepmod, levels = pepmod_lvls(peptide, mod, pepmod))
+#   )
+#
+# mch2 %>%
+#   filter(isok(peptide)) %>%
+#   pivot_longer(c(score, new_score)) %>%
+#   ggplot(aes(value)) +
+#   geom_histogram(bins=60) +
+#   scale_y_continuous(trans='log10') +
+#   scale_x_continuous(limits=c(0, 1)) +
+#   facet_wrap(~name, ncol = 1)
+
+scores <-
+  mch %>%
+  filter(isok(peptide)) %>%
+  group_by(measurement) %>%
+  summarise(score = max(score))
+
+scores %>%
+  mutate(score_bin = cut_width(score, width = 0.1, center = 0.1)) %>%
+  ggplot(aes(score_bin)) +
+  geom_bar() +
+  scale_y_continuous(trans = "log10")
+
+# LYS můstky
+# VFGRCELAAA + WIRGCRL
+# GNWVCAAKFE + WRNRCKGTDV
+# SRWWCNDGRT + CNIPCSALLS
+# SRNLCNIPCS + ASVNCAKKIV
+
+View(mch %>% filter(str_detect(peptide, "\\+")) %>% arrange(desc(score)))
+
+View(
+  mch2 %>%
+    arrange(desc(score)) %>%
+    select(measurement, scan, peptide, score)
+)
+
+matches <-
+  mch %>%
+  arrange(desc(score)) %>%
+  group_by(scan) %>%
+  mutate(score_rank = row_number(desc(score))) %>%
+  filter(score_rank <= 1) %>%
+  arrange(desc(score)) %>%
+  summarise(pep = peptide)
+
+okok <-
+  mch %>%
+  filter(isok(peptide)) %>%
+  arrange(desc(score))
+
+
+matches <- function(sc) {
+  okok %>%
+    filter(scan == sc) %>%
+    View()
+}
+
 
 mch %>%
-  #filter(measurement < 400) %>%
-  filter(score > 0.2) %>%
-  ggplot(aes(peptide, measurement)) +
-  geom_tile(aes(fill = score))
+  filter(measurement < 5000) %>%
+  group_by(measurement) %>%
+  mutate(score_rank = row_number(desc(score))) %>%
+  ungroup() %>%
+  ggplot(aes(pepid, measurement)) +
+  geom_tile(aes(fill = score)) +
+  guides(x = guide_axis(angle = 90))
+
+
+
+c <-
+  mch %>%
+  filter(scan == 4592) %>%
+  arrange(desc(score)) %>%
+  filter(peptide == "CELAAAMKR")
+
+silico <-
+  tibble(
+    type = "silico", mass = str_split(c$silico_frags, ";")[[1]] %>% as.numeric(),
+    intensity = 2e06
+  )
+
+nature <-
+  tibble(
+    type = "nature", mass = str_split(c$frags, ";")[[1]] %>% as.numeric(),
+    intensity = str_split(c$frags_intensity, ";")[[1]] %>% as.numeric()
+  )
+
+silico %>%
+  mutate(
+    type =
+      if_else(
+        mass %>% map_lgl(~ min(abs(nature$mass - .x)) < 0.01),
+        "silico",
+        "missing"
+      )
+  ) %>%
+  bind_rows(nature) %>%
+  ggplot(aes(mass, intensity)) +
+  geom_col(aes(color = type))
+
+
+# MZID --------------------------------------------------------------------
+
+t <-
+  read_tsv("/Users/eugen/code/bp/bp-code/data/mgf/190318_LYS_RAT_50x_05.tsv") %>%
+  mutate(
+    best_match =
+      gsub("\\+|\\d|,", "", str_extract(Peptide, "(?<=\\.).*(?=\\.)"))
+  )
+
+get_matches <- function(df, reference) {
+  df %>%
+    arrange(desc(score)) %>%
+    group_by(measurement) %>%
+    summarise(
+      best_match = first(peptide),
+      scan = first(scan),
+      score = first(score),
+      pepid = first(pepid)
+    ) %>%
+    full_join(
+      reference %>%
+        select(ScanNum, best_match, SpecID),
+      by = c("scan" = "ScanNum")
+    ) %>%
+    filter(best_match.x != best_match.y)
+}
+
+mch %>%
+  arrange(desc(score)) %>%
+  group_by(measurement, scan) %>%
+  summarise(best_match = first(peptide)) %>%
+  full_join(t %>% select(ScanNum, best_match, SpecID), by = c("scan" = "ScanNum")) %>%
+  filter(best_match.x == best_match.y) %>%
+  View()

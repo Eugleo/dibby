@@ -1,7 +1,7 @@
 from protein import Protein, trypsin
 from measurement import read_mgf
 import pandas as pd
-
+from multiprocessing import Pool
 OVA = "GSIGAASMEFCFDVFKELKVHHANENIFYCPIAIMSALAMVYLGAKDSTRTQINKVVRFDKLPGFGDSIEAQCGTSVNVHSSLRDILNQITKPNDVYSFSLASRLYAEERYPILPEYLQCVKELYRGGLEPINFQTAADQARELINSWVESQTNGIIRNVLQPSSVDSQTAMVLVNAIVFKGLWEKAFKDEDTQAMPFRVTEQESKPVQMMYQIGLFRVASMASEKMKILELPFASGTMSMLVLLPDEVSGLEQLESIINFEKLTEWTSSNVMEERKIKVYLPRMKMEEKYNLTSVLMAMGITDVFSSSANLSGISSAESLKISQAVHAAHAEINEAGREVVGSAEAGVDAASVSEEFRADHPFLFCIKHIATNAVLFFGRCVSP"
 LYS = "KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGILQINSRWWCNDGRTPGSRNLCNIPCSALLSSDITASVNCAKKIVSDGNGMNAWVAWRNRCKGTDVQAWIRGCRL"
 BSA = "DTHKSEIAHRFKDLGEEHFKGLVLIAFSQYLQQCPFDEHVKLVNELTEFAKTCVADESHAGCEKSLHTLFGDELCKVASLRETYGDMADCCEKQEPERNECFLSHKDDSPDLPKLKPDPNTLCDEFKADEKKFWGKYLYEIARRHPYFYAPELLYYANKYNGVFQECCQAEDKGACLLPKIETMREKVLTSSARQRLRCASIQKFGERALKAWSVARLSQKFPKAEFVEVTKLVTDLTKVHKECCHGDLLECADDRADLAKYICDNQDTISSKLKECCDKPLLEKSHCIAEVEKDAIPENLPPLTADFAEDKDVCKNYQEAKDAFLGSFLYEYSRRHPEYAVSVLLRLAKEYEATLEECCAKDDPHACYSTVFDKLKHLVDEPQNLIKQNCDQFEKLGEYGFQNALIVRYTRKVPQVSTPTLVEVSRSLGKVGTRCCTKPESERMPCTEDYLSLILNRLCVLHEKTPVSEKVTKCCTESLVNRRPCFSALTPDETYVPKAFDEKLFTFHADICTLPDTEKQIKKQTALVELLKHKPKATEEQLKTVMENFVAFVDKCCAADDKEACFAVEGPKLVVSTQTALA"
@@ -14,22 +14,23 @@ BSA = "DTHKSEIAHRFKDLGEEHFKGLVLIAFSQYLQQCPFDEHVKLVNELTEFAKTCVADESHAGCEKSLHTLFGDE
 
 
 protein = Protein(LYS)
-peptides = protein.digest(trypsin)
+peptides = list(protein.digest(trypsin))
+measurements = list(read_mgf("../data/mgf/190318_LYS_RAT_50x_05.mgf"))
 
 # Protein Pilot
 # Paragon
 # AA tagy ze spektra
 
-soft_err_ppm = 10
-hard_err_ppm = 20
+soft_err_ppm = 50
+hard_err_ppm = 10
 result = []
-peps_with_threshold = [(pep, (hard_err_ppm / 1e6) * pep.total_mass) for pep in peptides]
-for i, m in enumerate(read_mgf("../data/mgf/190318_LYS_AT_50x_05.mgf")):
+peps_with_threshold = [(pep, (hard_err_ppm / 1e6) * pep.total_mz) for pep in peptides]
+for i, m in enumerate(measurements):
     if i % 500 == 0:
         print(f"Done: {i}")
 
     for pep, t in peps_with_threshold:
-        if abs(pep.total_mass - m.peptide_mz) <= t:
+        if pep.total_charge == m.charge and abs(pep.total_mz - m.peptide_mz) <= t:
             score = m.score_match(
                 pep,
                 soft_err_ppm=soft_err_ppm,
@@ -43,7 +44,7 @@ for i, m in enumerate(read_mgf("../data/mgf/190318_LYS_AT_50x_05.mgf")):
                     "score": score,
                     "mod": pep.modstr,
                     "scan": m.scan,
-                    "mass_error": pep.total_mass - m.peptide_mz,
+                    "mass_error": pep.total_mz - m.peptide_mz,
                     "measurement": i,
                     # "silico_frags": ";".join(str(m) for m in pep.fragment_masses()),
                     # "frags": ";".join(str(f) for f in m.fragments_mz),
@@ -51,7 +52,7 @@ for i, m in enumerate(read_mgf("../data/mgf/190318_LYS_AT_50x_05.mgf")):
                 }
             )
 df = pd.DataFrame(result)
-df.to_csv("../out/lys_peptide_matches_ultra_new_score.csv", index=False)
+df.to_csv("../out/lys_analysis_rat.csv", index=False)
 
 # Nechat pokud
 # má vysokou pnost
@@ -59,3 +60,8 @@ df.to_csv("../out/lys_peptide_matches_ultra_new_score.csv", index=False)
 # nebo je krátký a obsahuje cystein, pak na pokrytí nezáleží
 
 # a u těchto se podívat na to, co v tom spektru přebývá?
+
+def show_matched_fragments(measurement_index, peptide_index):
+    m = measurements[measurement_index]
+    p = peptides[peptide_index]
+
