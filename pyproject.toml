@@ -13,7 +13,9 @@ ipython = "^7.21.0"
 pepfrag = "^0.3.0"
 pyopenms = "^2.6.0"
 lxml = "^4.6.3"
+notebook = "^6.3.0"
 jupyter = "^1.0.0"
+tqdm = "^4.60.0"
 
 [tool.poetry.dev-dependencies]
 

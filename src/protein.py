@@ -18,6 +18,17 @@ def trypsin(protein):
     return result
 
 
+def pepsin(protein):
+    last = 0
+    result = []
+    for i in range(len(protein) - 1):
+        if protein[i] in ["F", "L", "W", "Y", "A", "E", "Q"]:
+            result.append((last, i + 1))
+            last = i + 1
+    result.append((last, len(protein)))
+    return result
+
+
 class Fragment:
     def __init__(self, mz, name=None, intensity=None):
         self.mz = mz
@@ -88,16 +99,20 @@ class Peptide:
         pf.IonType.y: ["NH3", "H2O"],
     }
 
-    def __init__(self, peps):
+    def __init__(self, peps, cysteines):
         self.peptides = [
             pf.Peptide(pep["seq"], pep["charge"], pep["mods"]) for pep in peps
         ]
+
+        self.cysteines = cysteines
+        self.mcs = [pep["mc"] for pep in peps]
 
         self._fragments = None
         self._noncysteine_fragments = None
         self._fragment_masses = None
         self._noncysteine_fragment_masses = None
         self._total_mz = None
+        self._total_mass = None
         self._total_charge = None
         self._modstr = None
 
@@ -110,18 +125,25 @@ class Peptide:
     @property
     def modstr(self):
         if self._modstr is None:
-            self._modstr = str([(m.mod, m.site) for p in self.peptides for m in p.mods])
+            self._modstr = ", ".join(
+                [
+                    f"{m.mod} ({m.mass:.2f}) at {i}/{m.site}"
+                    for i, p in enumerate(self.peptides)
+                    for m in p.mods
+                ]
+            )
         return self._modstr
 
     @property
-    def total_mz(self):
-        if self._total_mz is None:
+    def total_mass(self):
+        if self._total_mass is None:
             mod = (len(self.peptides) - 1) * mass.calculate_mass(formula="H2")
-            total_mass = sum(p.mass for p in self.peptides) - mod
-            self._total_mz = (total_mass / self.total_charge) + mass.calculate_mass(
-                formula="H"
-            )
-        return self._total_mz
+            self._total_mass = sum(p.mass for p in self.peptides) - mod
+        return self._total_mass
+
+    @property
+    def total_mz(self):
+        return (self.total_mass / self.total_charge) + mass.calculate_mass(formula="H")
 
     @property
     def total_charge(self):
@@ -192,19 +214,27 @@ class Protein:
         self.sequence = sequence
         self.charge = charge
 
-    def digest(self, enzyme, maxskip=2, charges={2, 3, 4, 5, 6}) -> Set[Peptide]:
+    # Some peptides are skipped, such as
+    # VFGRCELAAAMKR, CELAAAMK, CKGTDVQAWIR, GYSLGNWVCAAK
+    def digest(self, enzyme, mc=2, charges={1, 2, 3, 4, 5, 6}) -> Set[Peptide]:
         peptides_initial = enzyme(self.sequence)
         peptides_skip = {
-            (peptides_initial[i][0], peptides_initial[i + s][1])
-            for s in range(maxskip + 1)
+            (peptides_initial[i][0], peptides_initial[i + s][1], s)
+            for s in range(mc + 1)
             for i in range(len(peptides_initial) - s)
         }
 
         def variants(peptide):
             seq = self.sequence[peptide[0] : peptide[1]]
-            alkylations = ALKYLATION_IAA.everywhere(seq)
             return [
-                {"charge": ch, "seq": seq, "mods": alkylations + mods}
+                {
+                    "charge": ch,
+                    "seq": seq,
+                    "mods": mods,
+                    "beg": peptide[0],
+                    "end": peptide[1],
+                    "mc": peptide[2],
+                }
                 for ch in charges
                 for mods in OXIDATION_MET.somewhere(seq)
             ]
@@ -216,17 +246,53 @@ class Protein:
         }
 
         peptides_joined = [
-            [v] for pepvars in peptide_variants.values() for v in pepvars
+            {
+                "peps": [v | {"mods": v["mods"] + ALKYLATION_IAA.everywhere(v["seq"])}],
+                "cysteines": [],
+            }
+            for pepvars in peptide_variants.values()
+            for v in pepvars
         ]
         for beg, end in itertools.combinations(cysteines, 2):
             for p1 in peptides_having_cysteine[beg]:
                 for p2 in peptides_having_cysteine[end]:
                     for v1 in peptide_variants[p1]:
                         for v2 in peptide_variants[p2]:
-                            if v1["charge"] + v2["charge"] in charges:
-                                peptides_joined.append([v1, v2])
+                            if (
+                                v1["charge"] + v2["charge"] in charges
+                                and list(
+                                    range(
+                                        max(v1["beg"], v2["beg"]),
+                                        min(v1["end"], v2["end"]),
+                                    )
+                                )
+                                == []
+                            ):
+                                v1_modified = v1 | {
+                                    "mods": v1["mods"]
+                                    + [
+                                        m
+                                        for m in ALKYLATION_IAA.everywhere(v1["seq"])
+                                        if m.site + v1["beg"] - 1 != beg
+                                    ]
+                                }
+                                v2_modified = v2 | {
+                                    "mods": v2["mods"]
+                                    + [
+                                        m
+                                        for m in ALKYLATION_IAA.everywhere(v2["seq"])
+                                        if m.site + v2["beg"] - 1 != end
+                                    ]
+                                }
 
-        return [Peptide(pepvars) for pepvars in peptides_joined]
+                                peptides_joined.append(
+                                    {
+                                        "peps": [v1_modified, v2_modified],
+                                        "cysteines": [(beg, end)],
+                                    }
+                                )
+
+        return [Peptide(**pepvars) for pepvars in peptides_joined]
 
     def __str__(self):
         return self.sequence
