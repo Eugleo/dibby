@@ -82,7 +82,7 @@ class PeptideMeasurement:
         self, peptide: Peptide, multiplier=binary_multiplier(tolerance_ppm=10)
     ):
         if peptide.ismerged:
-            generated = peptide.noncysteine_fragment_masses
+            generated = peptide.fragment_masses
         else:
             generated = peptide.fragment_masses
 

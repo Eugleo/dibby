@@ -146,7 +146,7 @@ mch <-
   )
 
 mch2 <-
-  read_csv("../out/lys_analysis_rat_sqr.csv") %>%
+  read_csv("../out/lys_analysis_at.csv") %>%
   mutate(
     measurement = measurement + 1,
     pepmod = if_else(is.na(mod), peptide, paste(peptide, mod, sep = "_")),
@@ -175,7 +175,7 @@ mch2 <-
 #   facet_wrap(~name, ncol = 1)
 
 scores <-
-  mch %>%
+  mch2 %>%
   filter(isok(peptide)) %>%
   group_by(measurement) %>%
   summarise(score = max(score))
@@ -192,7 +192,7 @@ scores %>%
 # SRWWCNDGRT + CNIPCSALLS
 # SRNLCNIPCS + ASVNCAKKIV
 
-View(mch %>% filter(str_detect(peptide, "\\+")) %>% arrange(desc(score)))
+View(mch2 %>% filter(str_detect(peptide, "\\+")) %>% arrange(desc(score)))
 
 View(
   mch2 %>%
@@ -215,15 +215,7 @@ okok <-
   arrange(desc(score))
 
 
-matches <- function(sc) {
-  okok %>%
-    filter(scan == sc) %>%
-    View()
-}
-
-
-mch %>%
-  filter(measurement < 5000) %>%
+mch2 %>%
   group_by(measurement) %>%
   mutate(score_rank = row_number(desc(score))) %>%
   ungroup() %>%
@@ -289,8 +281,20 @@ get_matches <- function(df, reference) {
         select(ScanNum, best_match, SpecID),
       by = c("scan" = "ScanNum")
     ) %>%
-    filter(best_match.x != best_match.y)
+    mutate(
+      is_match =
+        case_when(
+          is.na(best_match.x) ~ "FN",
+          is.na(best_match.y) ~ "FP",
+          best_match.x == best_match.y ~ "TP",
+          TRUE ~ "TF"
+        )
+    )
 }
+
+get_matches(mch, t) %>%
+  ggplot(aes(score)) +
+  geom_density(aes(color = is_match))
 
 mch %>%
   arrange(desc(score)) %>%
