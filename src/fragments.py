@@ -8,7 +8,6 @@ from common import LYS
 from precursor import Mod, Peptide, Residue, err_margin, compute_error, within_bounds
 
 
-# TODO: Optimize using binary search
 from src.measurement import PeptideMeasurement
 from src.protein import trypsin
 
@@ -22,6 +21,7 @@ class MultiP:
     _disulfide_bond: Dict[int, int]
     _modifications: Dict[str, Tuple[Mod, int]]
     _alkylation_mass: float
+    _residues: List[Residue]
 
     def __init__(
         self,
@@ -39,15 +39,26 @@ class MultiP:
         self._modifications = modifications
         self._alkylation_mass = alkylation_mass
 
-    def __getitem__(self, index: int) -> Residue:
-        for segment in self._segments:
-            residue = segment[index]
-            if residue is not None:
-                if residue.name == "C" and self.bond_partner(index) is None:
-                    return Residue(
-                        residue.name, [Mod("Cys alkylation", self._alkylation_mass)]
+        self._residues = []
+
+        for s in self._segments:
+            b = s.beginning
+            for i in s:
+                res = s[i]
+                if res.name == "C" and self._disulfide_bond.get(i, None) is None:
+                    self._residues.append(
+                        Residue("C", [Mod("Cys alkylation", self._alkylation_mass)])
                     )
-                return residue
+                else:
+                    self._residues.append(res)
+
+    def __getitem__(self, index: int) -> Residue:
+        index_trans = 0
+        for segment in self._segments:
+            if segment.beginning <= index < segment.end:
+                return self._residues[index_trans + index - segment.beginning]
+            else:
+                index_trans += segment.end - segment.beginning
 
     def __iter__(self):
         for segment in self._segments:
@@ -385,33 +396,33 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
 
             return
 
-        segment = peptide.segment(max_i)
+        last_segment = peptide.segment(max_i)
         new_max_i_per_segment = max_i_per_segment.copy()
-        new_max_i_per_segment[segment] = max_i
+        new_max_i_per_segment[last_segment] = max_i
 
         pivot = pivots[0]
-        current_segment = peptide.segment(pivot)
-        current_segment_max_i = new_max_i_per_segment[current_segment]
+        segment = peptide.segment(pivot)
+        current_segment_beginning = peptide.segment_beginning(segment)
+        current_segment_max_i = new_max_i_per_segment[segment]
 
         beg_start = max(
-            peptide.segment_beginning(segment), current_segment_max_i, fragment_start
+            # MAYBE: Maybe beggining of the last segment, as it used to be?
+            # peptide.segment_beginning(last_segment),
+            current_segment_max_i,
+            fragment_start,
         )
         beg_end = pivot
 
         end_start = pivot + 1
-        end_end = peptide.segment_end(current_segment)
+        end_end = peptide.segment_end(segment)
 
-        at_segment_start = current_segment_max_i == peptide.segment_beginning(segment)
-        shift_optim = (
-            not at_segment_start
-            and current_segment_max_i != pivot
-            and not beg_start == fragment_start
-        )
+        first_in_segment = max_i_per_segment[segment] == current_segment_beginning
 
-        # TODO: Add back shift optim
-        for b in range(beg_start + 0, beg_end + 1):
+        shift_optim = new_max_i_per_segment[segment] != pivot and not first_in_segment
+
+        for b in range(beg_start + shift_optim, beg_end + 1):
             is_break = b > beg_start or (
-                b == fragment_start and b > peptide.segment_beginning(current_segment)
+                b == fragment_start and b > current_segment_beginning
             )
 
             if not is_break:
@@ -618,3 +629,8 @@ if __name__ == "__main__":
                                     of.write(f"{to_print}\n")
     end_time = time.time()
     print(f"It took {end_time - start_time} seconds")
+
+# Optimizations
+# - selective charge, 150 -> 120
+# - caching modified Cys Residue, 120 -> 113
+# - shift optimization, 113 -> 111
