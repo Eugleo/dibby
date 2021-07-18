@@ -125,12 +125,15 @@ Y_ION_MOD = PROTON
 B_ION_MOD = -PROTON
 
 
-def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
+def fragments(
+    target_masses: List[float], peptide: MultiP, allowed_breaks, ppm_error=10
+):
 
     result = []
 
     def go_run(
         i: int,
+        target_i: int,
         min_end: int,
         max_end: int,
         current_mass: float,
@@ -148,12 +151,33 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
         # TODO: Tighten the lower bound
         # - add must-have modifications
         # - properly count Cys modification
+
+        if target_i == len(target_masses):
+            return
+
         min_possible_mass = (
             current_mass + B_ION_MOD + (len(broken_cysteines)) * (-H2 - SULPHUR)
         )
         lower_bound = min_possible_mass - err_margin(min_possible_mass, ppm_error)
-        if lower_bound > target_mass:
-            # Too heavy, beyond repair, end the whole branch
+
+        if lower_bound > target_masses[target_i]:
+            go_run(
+                i,
+                target_i + 1,
+                min_end,
+                max_end,
+                current_mass,
+                breaks_left,
+                pivots,
+                selection,
+                broken_cysteines,
+                unbroken_cysteines,
+                neutral_losses_count,
+                max_i_per_segment,
+                fragment_start,
+                modded_residues,
+            )
+
             return
 
         if i >= max_end:
@@ -164,6 +188,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
             go(
                 i,
                 max_i_per_segment,
+                target_i,
                 current_mass + OH,
                 breaks_left,
                 broken_cysteines,
@@ -184,10 +209,11 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
                     # This Cys (i) has a broken partner, so it has to be broken, too
                     go_run(
                         i + 1,
+                        target_i,
                         min_end,
                         max_end,
                         current_mass + residue.mass,
-                        breaks_left,  # Already added when we were breaking j
+                        breaks_left,
                         pivots,
                         selection,
                         broken_cysteines + (i,),
@@ -204,6 +230,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
 
                     go_run(
                         i + 1,
+                        target_i,
                         min_end,
                         max_end,
                         current_mass + residue.mass,
@@ -223,6 +250,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
                         # Break the bond
                         go_run(
                             i + 1,
+                            target_i,
                             min_end,
                             max_end,
                             current_mass + residue.mass,
@@ -241,9 +269,9 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
                         # Keep the bond, add new run
                         go_run(
                             i + 1,
+                            target_i,
                             min_end,
                             max_end,
-                            # Subtract H2 for the bond
                             current_mass + residue.mass - H2,
                             breaks_left,
                             sort_into(j, pivots),
@@ -267,6 +295,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
 
                 go_run(
                     i + 1,
+                    target_i,
                     min_end,
                     max_end,
                     current_mass + residue.mass,
@@ -287,6 +316,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
                     go(
                         i,
                         max_i_per_segment,
+                        target_i,
                         current_mass + B_ION_MOD,
                         breaks_left - 1,
                         broken_cysteines,
@@ -302,6 +332,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
     def go(
         max_i: int,
         max_i_per_segment: Dict[int, int],
+        target_i: int,
         current_mass: float,
         breaks_left: int,
         broken_cysteines: Tuple[int, ...],
@@ -378,20 +409,23 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
             combinations = combine_modifications_2(
                 potential_mods,
                 starting_mass=current_mass,
-                target_mass=target_mass,
+                target_mass=target_masses[target_i],
                 ppm_error=ppm_error,
             )
 
             for modifications in combinations:
                 total_mass = current_mass + sum(m.mass for m in modifications)
                 result.append(
-                    {
-                        "seq": seq,
-                        "ranges": ranges,
-                        "mass": total_mass,
-                        "error": compute_error(total_mass, target_mass),
-                        "mods": modifications,
-                    }
+                    (
+                        target_i,
+                        {
+                            "seq": seq,
+                            "ranges": ranges,
+                            "mass": total_mass,
+                            "error": compute_error(total_mass, target_masses[target_i]),
+                            "mods": modifications,
+                        },
+                    )
                 )
 
             return
@@ -428,6 +462,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
             if not is_break:
                 go_run(
                     b,
+                    target_i,
                     end_start,
                     end_end,
                     current_mass + PROTON,
@@ -445,6 +480,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
             if is_break and breaks_left > 0:
                 go_run(
                     b,
+                    target_i,
                     end_start,
                     end_end,
                     current_mass + Y_ION_MOD,
@@ -464,6 +500,7 @@ def fragments(target_mass, peptide: MultiP, allowed_breaks, ppm_error=10):
         go(
             min(pointers.values()),
             pointers,
+            0,
             0,
             allowed_breaks,
             (),
@@ -610,23 +647,26 @@ if __name__ == "__main__":
                                     coef / (frag - err_margin(frag, error_ppm=10))
                                 ),
                             )
-                            for ch in range(1, max_charge + 1):
-                                matches = fragments(
-                                    frag * ch - PROTON * ch,
-                                    multiprotein,
-                                    allowed_breaks=2,
-                                )
-                                for m in matches:
-                                    to_print = {
-                                        "scan": measurement.scan,
-                                        "precursor_sequence": multip_str,
-                                        "bonds": bonds,
-                                        "fragment_mz": frag,
-                                        "intensity": intensity,
-                                        "match": m,
-                                        "charge": ch,
-                                    }
-                                    of.write(f"{to_print}\n")
+
+                            matches = fragments(
+                                [
+                                    frag * ch - PROTON * ch
+                                    for ch in range(1, max_charge + 1)
+                                ],
+                                multiprotein,
+                                allowed_breaks=2,
+                            )
+                            for i, m in sorted(matches, key=lambda m: m[0]):
+                                to_print = {
+                                    "scan": measurement.scan,
+                                    "precursor_sequence": multip_str,
+                                    "bonds": bonds,
+                                    "fragment_mz": frag,
+                                    "intensity": intensity,
+                                    "match": m,
+                                    "charge": i + 1,
+                                }
+                                of.write(f"{to_print}\n")
     end_time = time.time()
     print(f"It took {end_time - start_time} seconds")
 
@@ -634,3 +674,4 @@ if __name__ == "__main__":
 # - selective charge, 150 -> 120
 # - caching modified Cys Residue, 120 -> 113
 # - shift optimization, 113 -> 111
+# - bundling charges to a multitarget search, 111 -> 57
