@@ -1,14 +1,12 @@
 import dataclasses
 import pickle
 from collections import Counter
-from typing import Tuple, List, Dict, Union, Set, Iterator, Optional
-from enum import Enum, auto
+from typing import Tuple, List, Dict, Union, Iterator
 import time
 
 from protein import trypsin
 from measurement import read_mgf, PeptideMeasurement
 from pyteomics import mass
-from common import LYS, BSA
 
 
 @dataclasses.dataclass
@@ -61,7 +59,9 @@ class Peptide:
     beginning: int
     end: int
     seq: str
-    mass_range: Range
+    min_mass: float
+    mid_mass: float
+    max_mass: float
 
     _modifications: Dict[str, Tuple[Mod, int]]
     _residues: List[Residue]
@@ -94,9 +94,9 @@ class Peptide:
             else:
                 pos += m.mass * count
 
-        self.mass_range = Range(
-            zwitterion_mass + neg, zwitterion_mass, zwitterion_mass + pos
-        )
+        self.min_mass = zwitterion_mass + neg
+        self.mid_mass = zwitterion_mass
+        self.max_mass = zwitterion_mass + pos
 
     def __getitem__(self, index: int):
         if self.beginning <= index < self.end:
@@ -152,7 +152,6 @@ def compute_error(reference_mass, measured_mass):
     return 1e6 * abs(measured_mass - reference_mass) / reference_mass
 
 
-# Pass None when you want to allow to skip a mod
 def combine_modifications(
     modifications: List[List[Union[Mod, None]]],
     starting_mass: float,
@@ -167,7 +166,7 @@ def combine_modifications(
                 result.append(selection)
         else:
             for m in modifications[i]:
-                if m is None:
+                if m is None:  # None = no modification
                     go(i + 1, current_mass, selection)
                 else:
                     go(i + 1, current_mass + m.mass, selection + (m,))
@@ -193,17 +192,19 @@ def match_precursors(
         i: int,
         segments_left: int,
         selection: Tuple[int, ...],
-        current_mass: Range = Range.from_constant(h2o),
+        min_mass: float = h2o,
+        base_mass: float = h2o,
+        max_mass: float = h2o,
         free_cys_count: int = 0,
         waiting_for_cys: bool = False,
     ) -> None:
         has_alkylated_cys = free_cys_count % 2 == 1
-        min_mass = current_mass.minimum + alkylation_mass * has_alkylated_cys
-        lower_bound = min_mass - err_margin(min_mass, error_ppm)
+        min_realistic_mass = min_mass + alkylation_mass * has_alkylated_cys
+        lower_bound = min_realistic_mass - err_margin(min_realistic_mass, error_ppm)
 
         if not waiting_for_cys:
-            max_mass = current_mass.maximum + alkylation_mass * free_cys_count
-            upper_bound = max_mass + err_margin(max_mass, error_ppm)
+            max_realistic_mass = max_mass + alkylation_mass * free_cys_count
+            upper_bound = max_realistic_mass + err_margin(max_realistic_mass, error_ppm)
 
             if lower_bound <= target_mass <= upper_bound:
                 ranges = list(zip(selection[::2], (selection + (i,))[1::2]))
@@ -228,7 +229,7 @@ def match_precursors(
 
                 mod_combinations = combine_modifications(
                     possible_mods,
-                    starting_mass=current_mass.middelum,
+                    starting_mass=base_mass,
                     target_mass=target_mass,
                     error_ppm=error_ppm,
                 )
@@ -240,21 +241,19 @@ def match_precursors(
                     seq = "+".join(segments)
 
                     for modifications in mod_combinations:
-                        total_mass = current_mass.middelum + sum(
-                            m.mass for m in modifications
-                        )
+                        total_mass = base_mass + sum(m.mass for m in modifications)
 
                         alkylated_pairs = sum(
                             m.description == "Alkylated Cys Pair" for m in modifications
                         )
-                        intra_bonds = max_other_bonds - alkylated_pairs
-                        inter_bonds = (max_segments - segments_left) - 1
+                        joining_bonds = (max_segments - segments_left) - 1
+                        other_bonds = max_other_bonds - alkylated_pairs
 
                         result.append(
                             {
                                 "sequence": seq,
                                 "ranges": ranges,
-                                "cys_bonds": intra_bonds + inter_bonds,
+                                "cys_bonds": other_bonds + joining_bonds,
                                 "mass": total_mass,
                                 "error": compute_error(total_mass, target_mass),
                                 "mods": modifications,
@@ -279,7 +278,9 @@ def match_precursors(
                     beginning,
                     segments_left=segments_left - 1,
                     selection=selection + (i, beginning),
-                    current_mass=current_mass.add_constant(h2o - h2),
+                    min_mass=min_mass + (h2o - h2),
+                    base_mass=base_mass + (h2o - h2),
+                    max_mass=max_mass + (h2o - h2),
                     free_cys_count=free_cys_count - 1,
                     waiting_for_cys=True,
                 )
@@ -290,7 +291,9 @@ def match_precursors(
             i + 1,
             segments_left=segments_left,
             selection=selection,
-            current_mass=current_mass + peptides[i].mass_range,
+            min_mass=min_mass + peptides[i].min_mass,
+            base_mass=base_mass + peptides[i].mid_mass,
+            max_mass=max_mass + peptides[i].max_mass,
             free_cys_count=free_cys_count + max(new_free_cys, 0),
             waiting_for_cys=new_free_cys < 0,
         )
@@ -302,28 +305,45 @@ def match_precursors(
 
 
 if __name__ == "__main__":
-    measurements = {m.scan: m for m in read_mgf("../data/mgf/190318_LYS_AT_50x_05.mgf")}
+    import argparse
+    import tqdm
+    from pyteomics import fasta
+
+    args = argparse.ArgumentParser(description="Save precursor matches for given scans")
+
+    # Add the arguments
+    args.add_argument("--scans", type=str, required=True, help="path to the mgf file")
+    args.add_argument(
+        "--protein", type=str, required=True, help="path to the protein fasta"
+    )
+    args.add_argument(
+        "--output", type=str, required=True, help="path to the output pickle file"
+    )
+
+    # Execute the parse_args() method
+    args = args.parse_args()
+
+    measurements = {m.scan: m for m in read_mgf(args.scans)}
+    protein = [r.sequence for r in fasta.read(args.protein)][0]
 
     peptides = []
-    for b, e in trypsin(LYS):
-        seq = LYS[b:e]
+    for b, e in trypsin(protein):
+        seq = protein[b:e]
         met_ox = (Mod("met_ox", 15.9949), sum(aa == "M" for aa in seq))
         mods = {"M": met_ox} if "M" in seq else {}
         peptides.append(Peptide(b, e, seq, modifications=mods))
 
-    FILE_PATH = "../out/precursor_matches_lys_at_2_inter_bonds.pickle"
-
-    import tqdm
+    print(protein)
 
     start_time = time.time()
-    with open(FILE_PATH, "wb") as f:
+    with open(args.output, "wb") as f:
         for scan, measurement in tqdm.tqdm(measurements.items()):
             matches = match_precursors(
                 peptides,
                 measurement,
                 alkylation_mass=57.0214,
                 max_segments=3,
-                error_ppm=10,
+                error_ppm=15,
             )
             if matches:
                 pickle.dump({"measurement": measurement, "matches": matches}, f)
