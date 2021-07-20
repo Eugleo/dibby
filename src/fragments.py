@@ -2,11 +2,15 @@ import math
 import pickle
 from typing import Dict, Tuple, Optional, List, Union
 
+import tqdm
 from pyteomics import mass
 from common import LYS
 
 from precursor import Mod, Peptide, Residue, err_margin, compute_error, within_bounds
 
+import sys
+
+sys.setrecursionlimit(10000)
 
 from src.measurement import PeptideMeasurement
 from src.protein import trypsin
@@ -131,7 +135,7 @@ def fragments(
 
     result = []
 
-    def go_run(
+    def continue_run(
         i: int,
         target_i: int,
         min_end: int,
@@ -140,209 +144,166 @@ def fragments(
         breaks_left: int,
         pivots: Tuple[int, ...],
         selection: Tuple[int, ...],
-        broken_cysteines: Tuple[int, ...],
-        unbroken_cysteines: Tuple[int, ...],
+        disconnected_cys: Tuple[int, ...],
+        connected_cys: Tuple[int, ...],
         neutral_losses_count: int,
         max_i_per_segment: Dict[int, int],
         fragment_start: int,
         modded_residues: Dict[str, int],
     ):
+        if i > max_end:
+            raise AssertionError("This should never happen, i > max_end")
+
+        if target_i == len(target_masses):
+            # We've ran out of targets to fulfil, we're done
+            return
+
         # TODO: Add support for negative-mass modifications
         # TODO: Tighten the lower bound
         # - add must-have modifications
         # - properly count Cys modification
-
-        if target_i == len(target_masses):
-            return
-
         min_possible_mass = (
-            current_mass + B_ION_MOD + (len(broken_cysteines)) * (-H2 - SULPHUR)
+            current_mass + B_ION_MOD + (len(disconnected_cys)) * (-H2 - SULPHUR)
         )
         lower_bound = min_possible_mass - err_margin(min_possible_mass, ppm_error)
-
         if lower_bound > target_masses[target_i]:
-            go_run(
+            # Jump to the next target, current one is beyond reach (too low)
+            continue_run(
                 i,
-                target_i + 1,
-                min_end,
-                max_end,
-                current_mass,
-                breaks_left,
-                pivots,
-                selection,
-                broken_cysteines,
-                unbroken_cysteines,
-                neutral_losses_count,
-                max_i_per_segment,
-                fragment_start,
-                modded_residues,
+                target_i=target_i + 1,
+                min_end=min_end,
+                max_end=max_end,
+                current_mass=current_mass,
+                breaks_left=breaks_left,
+                pivots=pivots,
+                selection=selection,
+                disconnected_cys=disconnected_cys,
+                connected_cys=connected_cys,
+                neutral_losses_count=neutral_losses_count,
+                max_i_per_segment=max_i_per_segment,
+                fragment_start=fragment_start,
+                modded_residues=modded_residues,
             )
 
             return
 
-        if i >= max_end:
-            if i > max_end:
-                raise AssertionError("This should never happen, i > max_end")
+        # We can end the run
+        if min_end <= i <= max_end:
+            # We are ending the run even though we don't need to
+            premature_end = i < max_end
 
-            # We can't grow any longer, end the run
-            go(
-                i,
-                max_i_per_segment,
+            current_segment = peptide.segment(i)
+            new_max_i_per_segment = max_i_per_segment.copy()
+            new_max_i_per_segment[current_segment] = i
+
+            # End the run
+            start_new_run(
+                new_max_i_per_segment,
+                pivots,
+                breaks_left - premature_end,
+                fragment_start,
                 target_i,
-                current_mass + OH,
-                breaks_left,
-                broken_cysteines,
-                unbroken_cysteines,
-                neutral_losses_count,
-                pivots,
+                current_mass + (B_ION_MOD if premature_end else OH),
                 selection + (i,),
-                fragment_start,
                 modded_residues,
+                disconnected_cys,
+                connected_cys,
+                neutral_losses_count + premature_end,
             )
-            return
+
+            if not premature_end:
+                # No point in continuing this run, there's nowhere to continue to
+                return
+
+        residue = peptide[i]
+
+        if peptide.can_be_modified(i):
+            new_modded_residues = modded_residues.copy()
+            new_modded_residues.setdefault(residue.name, 0)
+            new_modded_residues[residue.name] += 1
         else:
-            residue = peptide[i]
+            new_modded_residues = modded_residues
 
-            # This residue is (was) part of a disulfide bond
-            if residue.name == "C" and ((j := peptide.bond_partner(i)) is not None):
-                if j in broken_cysteines:
-                    # This Cys (i) has a broken partner, so it has to be broken, too
-                    go_run(
-                        i + 1,
-                        target_i,
-                        min_end,
-                        max_end,
-                        current_mass + residue.mass,
-                        breaks_left,
-                        pivots,
-                        selection,
-                        broken_cysteines + (i,),
-                        unbroken_cysteines,
-                        neutral_losses_count,
-                        max_i_per_segment,
-                        fragment_start,
-                        modded_residues,
-                    )
-                elif j in unbroken_cysteines:
-                    # We have already seen this bond
-                    # We can't break it, and neither can we jump through it
-                    # So, just add the Cys (i) and go on
+        in_bond = (j := peptide.bond_partner(i)) is not None and residue.name == "C"
+        connected = in_bond and j in disconnected_cys
+        bond_is_new = not connected and j not in disconnected_cys
+        if in_bond and bond_is_new:
+            # We create two branches: one where the bond is kept...
+            if j > fragment_start:
+                # ...else we've already seen this fragment from the symmetric side
+                continue_run(
+                    i + 1,
+                    target_i,
+                    min_end,
+                    max_end,
+                    current_mass + residue.mass - H2,
+                    breaks_left,
+                    sort_into(j, pivots),
+                    selection,
+                    disconnected_cys,
+                    connected_cys + (i,),
+                    neutral_losses_count,
+                    max_i_per_segment,
+                    fragment_start,
+                    modded_residues,
+                )
 
-                    go_run(
-                        i + 1,
-                        target_i,
-                        min_end,
-                        max_end,
-                        current_mass + residue.mass,
-                        breaks_left,
-                        pivots,
-                        selection,
-                        broken_cysteines,
-                        unbroken_cysteines + (i,),
-                        neutral_losses_count,
-                        max_i_per_segment,
-                        fragment_start,
-                        modded_residues,
-                    )
-                else:
-                    # We haven't seen this Cys (i) nor its bond partner yet
-                    if breaks_left > 0:
-                        # Break the bond
-                        go_run(
-                            i + 1,
-                            target_i,
-                            min_end,
-                            max_end,
-                            current_mass + residue.mass,
-                            breaks_left - 1,
-                            pivots,
-                            selection,
-                            broken_cysteines + (i,),
-                            unbroken_cysteines,
-                            neutral_losses_count,
-                            max_i_per_segment,
-                            fragment_start,
-                            modded_residues,
-                        )
-
-                    if j > fragment_start:
-                        # Keep the bond, add new run
-                        go_run(
-                            i + 1,
-                            target_i,
-                            min_end,
-                            max_end,
-                            current_mass + residue.mass - H2,
-                            breaks_left,
-                            sort_into(j, pivots),
-                            selection,
-                            broken_cysteines,
-                            unbroken_cysteines + (i,),
-                            neutral_losses_count,
-                            max_i_per_segment,
-                            fragment_start,
-                            modded_residues,
-                        )
-
-            else:
-                # Add current residue, continue the run
-                if peptide.can_be_modified(i):
-                    new_modded_residues = modded_residues.copy()
-                    new_modded_residues.setdefault(residue.name, 0)
-                    new_modded_residues[residue.name] += 1
-                else:
-                    new_modded_residues = modded_residues
-
-                go_run(
+            # ...and one where it's not
+            if breaks_left > 0:
+                continue_run(
                     i + 1,
                     target_i,
                     min_end,
                     max_end,
                     current_mass + residue.mass,
-                    breaks_left,
+                    breaks_left - 1,
                     pivots,
                     selection,
-                    broken_cysteines,
-                    unbroken_cysteines,
+                    disconnected_cys + (i,),
+                    connected_cys,
                     neutral_losses_count,
                     max_i_per_segment,
                     fragment_start,
-                    new_modded_residues,
+                    modded_residues,
                 )
+        else:
+            # Add current residue, continue the run
+            # If there was a bond into us, add us to broken or unbroken cysteines
+            continue_run(
+                i + 1,
+                target_i=target_i,
+                min_end=min_end,
+                max_end=max_end,
+                current_mass=current_mass + residue.mass,
+                breaks_left=breaks_left,
+                pivots=pivots,
+                selection=selection,
+                disconnected_cys=(disconnected_cys + (i,))
+                if not connected
+                else disconnected_cys,
+                connected_cys=(connected_cys + (i,)) if connected else connected_cys,
+                neutral_losses_count=neutral_losses_count,
+                max_i_per_segment=max_i_per_segment,
+                fragment_start=fragment_start,
+                modded_residues=new_modded_residues,
+            )
 
-                # Break this run and end it
-                if i >= min_end and breaks_left > 0:
-                    # End the run
-                    go(
-                        i,
-                        max_i_per_segment,
-                        target_i,
-                        current_mass + B_ION_MOD,
-                        breaks_left - 1,
-                        broken_cysteines,
-                        unbroken_cysteines,
-                        neutral_losses_count + 1,
-                        pivots,
-                        selection + (i,),
-                        fragment_start,
-                        modded_residues,
-                    )
-                    return
-
-    def go(
-        max_i: int,
+    def start_new_run(
         max_i_per_segment: Dict[int, int],
-        target_i: int,
-        current_mass: float,
-        breaks_left: int,
-        broken_cysteines: Tuple[int, ...],
-        unbroken_cysteines,
-        neutral_losses_count: int,
         pivots: Tuple[int, ...],
-        selection: Tuple[int, ...],
+        breaks_left: int,
         fragment_start: int,
-        modded_residues: Dict[str, int],
+        target_i: int = 0,
+        current_mass: float = 0,
+        selection: Tuple[int, ...] = (),
+        modded_residues=None,
+        disconnected_cys: Tuple[int, ...] = (),
+        connected_cys=(),
+        neutral_losses_count: int = 0,
     ):
+
+        if modded_residues is None:
+            modded_residues = {}
 
         if len(pivots) == 0:
             potential_mods = []
@@ -375,10 +336,10 @@ def fragments(
                     ]
                 )
 
-            for c in broken_cysteines:
+            for c in disconnected_cys:
                 symmetric = (
                     (j := peptide.bond_partner(c)) is not None
-                ) and j in broken_cysteines
+                ) and j in disconnected_cys
 
                 # Symmetry breaking
                 if symmetric and c > j:
@@ -406,42 +367,47 @@ def fragments(
                 seq.append(s)
             seq = "+".join(seq)
 
-            combinations = combine_modifications_2(
-                potential_mods,
-                starting_mass=current_mass,
-                target_mass=target_masses[target_i],
-                ppm_error=ppm_error,
-            )
+            # TODO: Make the 190 threshold selectively lower
+            # It's basically the mass of the next added residue
+            valid_targets = [
+                i
+                for i, t in enumerate(target_masses)
+                if target_masses[target_i] <= t <= target_masses[target_i] + 85
+            ]
 
-            for modifications in combinations:
-                total_mass = current_mass + sum(m.mass for m in modifications)
-                result.append(
-                    (
-                        target_i,
-                        {
-                            "seq": seq,
-                            "ranges": ranges,
-                            "mass": total_mass,
-                            "error": compute_error(total_mass, target_masses[target_i]),
-                            "mods": modifications,
-                        },
-                    )
+            for target_i in valid_targets:
+                combinations = combine_modifications_2(
+                    potential_mods,
+                    starting_mass=current_mass,
+                    target_mass=target_masses[target_i],
+                    ppm_error=ppm_error,
                 )
 
-            return
+                for modifications in combinations:
+                    total_mass = current_mass + sum(m.mass for m in modifications)
+                    result.append(
+                        (
+                            target_i,
+                            {
+                                "seq": seq,
+                                "ranges": ranges,
+                                "mass": total_mass,
+                                "error": compute_error(
+                                    total_mass, target_masses[target_i]
+                                ),
+                                "mods": modifications,
+                            },
+                        )
+                    )
 
-        last_segment = peptide.segment(max_i)
-        new_max_i_per_segment = max_i_per_segment.copy()
-        new_max_i_per_segment[last_segment] = max_i
+            return
 
         pivot = pivots[0]
         segment = peptide.segment(pivot)
         current_segment_beginning = peptide.segment_beginning(segment)
-        current_segment_max_i = new_max_i_per_segment[segment]
+        current_segment_max_i = max_i_per_segment[segment]
 
         beg_start = max(
-            # MAYBE: Maybe beggining of the last segment, as it used to be?
-            # peptide.segment_beginning(last_segment),
             current_segment_max_i,
             fragment_start,
         )
@@ -451,65 +417,35 @@ def fragments(
         end_end = peptide.segment_end(segment)
 
         first_in_segment = max_i_per_segment[segment] == current_segment_beginning
-
-        shift_optim = new_max_i_per_segment[segment] != pivot and not first_in_segment
+        shift_optim = max_i_per_segment[segment] != pivot and not first_in_segment
 
         for b in range(beg_start + shift_optim, beg_end + 1):
             is_break = b > beg_start or (
                 b == fragment_start and b > current_segment_beginning
             )
 
-            if not is_break:
-                go_run(
+            if not is_break or breaks_left > 0:
+                continue_run(
                     b,
-                    target_i,
-                    end_start,
-                    end_end,
-                    current_mass + PROTON,
-                    breaks_left,
-                    pivots[1:],
-                    selection + (b,),
-                    broken_cysteines,
-                    unbroken_cysteines,
-                    neutral_losses_count,
-                    new_max_i_per_segment,
-                    fragment_start,
-                    modded_residues,
-                )
-
-            if is_break and breaks_left > 0:
-                go_run(
-                    b,
-                    target_i,
-                    end_start,
-                    end_end,
-                    current_mass + Y_ION_MOD,
-                    breaks_left - 1,
-                    pivots[1:],
-                    selection + (b,),
-                    broken_cysteines,
-                    unbroken_cysteines,
-                    neutral_losses_count + 1,
-                    new_max_i_per_segment,
-                    fragment_start,
-                    modded_residues,
+                    target_i=target_i,
+                    min_end=end_start,
+                    max_end=end_end,
+                    current_mass=current_mass + (Y_ION_MOD if is_break else PROTON),
+                    breaks_left=breaks_left - is_break,
+                    pivots=pivots[1:],
+                    selection=selection + (b,),
+                    disconnected_cys=disconnected_cys,
+                    connected_cys=connected_cys,
+                    neutral_losses_count=neutral_losses_count + is_break,
+                    max_i_per_segment=max_i_per_segment,
+                    fragment_start=fragment_start,
+                    modded_residues=modded_residues,
                 )
 
     for b in peptide:
         pointers = {s: peptide.segment_beginning(s) for s in range(peptide.segments)}
-        go(
-            min(pointers.values()),
-            pointers,
-            0,
-            0,
-            allowed_breaks,
-            (),
-            (),
-            0,
-            (b,),
-            (),
-            b,
-            modded_residues={},
+        start_new_run(
+            pointers, pivots=(b,), breaks_left=allowed_breaks, fragment_start=b
         )
 
     return result
@@ -604,6 +540,7 @@ if __name__ == "__main__":
     import time
 
     precursors_file = "../out/precursor_matches_lys_at_2_inter_bonds.pickle"
+    # fragments_file = "../out/fragment_matches_lys_at_2_inter_bonds.pickle"
     fragments_file = "../out/fragments_matches.txt"
 
     peptides = []
@@ -617,25 +554,17 @@ if __name__ == "__main__":
 
     with open(fragments_file, "w") as of:
         with open(precursors_file, "rb") as f:
-            counter = 0
-            while counter < 600:
-                counter += 1
+            precursor_matches = []
+            try:
+                while True:
+                    precursor_matches.append(pickle.load(f))
+            finally:
+                for match in tqdm.tqdm(precursor_matches[200:600]):
+                    measurement: PeptideMeasurement = match["measurement"]
+                    total_intensity = sum(measurement.fragments_intensity)
 
-                if counter < 200:
-                    continue
-
-                match = pickle.load(f)
-                measurement: PeptideMeasurement = match["measurement"]
-
-                total_intensity = sum(measurement.fragments_intensity)
-
-                if counter % 50 == 0:
-                    print("Scan", measurement.scan, "count", counter)
-
-                for precursor in match["matches"]:
-                    for multiprotein, bonds in gen_multip(peptides, precursor):
-                        multip_str = str(multiprotein)
-
+                    for precursor in match["matches"]:
+                        targets = []
                         for frag, intensity in zip(
                             measurement.fragments_mz,
                             measurement.fragments_intensity,
@@ -648,30 +577,55 @@ if __name__ == "__main__":
                                 ),
                             )
 
+                            for ch in range(1, max_charge + 1):
+                                targets.append(
+                                    (
+                                        {
+                                            "fragment_mz": frag,
+                                            "charge": ch,
+                                            "intensity": intensity,
+                                            "total_intensity": total_intensity,
+                                            "score": intensity / total_intensity,
+                                        },
+                                        frag * ch - PROTON * ch,
+                                    ),
+                                )
+                        targets = sorted(targets, key=lambda t: t[1])
+
+                        for multiprotein, bonds in gen_multip(peptides, precursor):
                             matches = fragments(
-                                [
-                                    frag * ch - PROTON * ch
-                                    for ch in range(1, max_charge + 1)
-                                ],
+                                [t for _, t in targets],
                                 multiprotein,
                                 allowed_breaks=2,
                             )
-                            for i, m in sorted(matches, key=lambda m: m[0]):
-                                to_print = {
-                                    "scan": measurement.scan,
-                                    "precursor_sequence": multip_str,
-                                    "bonds": bonds,
-                                    "fragment_mz": frag,
-                                    "intensity": intensity,
-                                    "match": m,
-                                    "charge": i + 1,
-                                }
-                                of.write(f"{to_print}\n")
-    end_time = time.time()
-    print(f"It took {end_time - start_time} seconds")
 
-# Optimizations
+                            multip_str = str(multiprotein)
+
+                            matches = sorted(
+                                matches,
+                                # key=lambda m: m[0],
+                                key=lambda m: (
+                                    targets[m[0]][0]["fragment_mz"],
+                                    targets[m[0]][0]["charge"],
+                                ),
+                            )
+
+                            for i, m in matches:
+                                to_print = {
+                                    "measurement": measurement,
+                                    "multipeptide": multiprotein,
+                                    "bonds": bonds,
+                                    "match": m,
+                                } | targets[i][0]
+                                of.write(f"{to_print}")
+                                # pickle.dump(to_print, of)
+
+                end_time = time.time()
+                print(f"It took {end_time - start_time} seconds")
+
+# Optimizations, measured on 845–3896
 # - selective charge, 150 -> 120
 # - caching modified Cys Residue, 120 -> 113
 # - shift optimization, 113 -> 111
-# - bundling charges to a multitarget search, 111 -> 57
+# - bundling charges to a multitarget search, 111 -> 55
+# - bundling fragments to a multitarget search, 55 -> 10
