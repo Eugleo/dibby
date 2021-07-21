@@ -86,6 +86,9 @@ class MultiP:
             if s.beginning <= residue <= s.end:
                 return i
 
+    def segment_bounds(self, segment: int) -> Tuple[int, int]:
+        return self.segment_beginning(segment), self.segment_end(segment)
+
     def segment_beginning(self, segment: int) -> int:
         return self._segments[segment].beginning
 
@@ -96,7 +99,7 @@ class MultiP:
         return "+".join(s.seq for s in self._segments)
 
 
-def combine_modifications_2(
+def combine_modifications(
     modifications: List[List[Union[Mod, None]]],
     starting_mass: float,
     target_mass: float,
@@ -128,6 +131,8 @@ SULPHUR = mass.calculate_mass(formula="S")
 Y_ION_MOD = PROTON
 B_ION_MOD = -PROTON
 
+SegmentCuts = Dict[int, Tuple[Tuple[int, int], ...]]
+
 
 def fragments(
     target_masses: List[float], peptide: MultiP, allowed_breaks, ppm_error=10
@@ -147,7 +152,7 @@ def fragments(
         disconnected_cys: Tuple[int, ...],
         connected_cys: Tuple[int, ...],
         neutral_losses_count: int,
-        max_i_per_segment: Dict[int, int],
+        segment_cuts: SegmentCuts,
         fragment_start: int,
         modded_residues: Dict[str, int],
     ):
@@ -163,7 +168,10 @@ def fragments(
         # - add must-have modifications
         # - properly count Cys modification
         min_possible_mass = (
-            current_mass + B_ION_MOD + (len(disconnected_cys)) * (-H2 - SULPHUR)
+            current_mass
+            + B_ION_MOD
+            + (len(disconnected_cys)) * (-H2 - SULPHUR)
+            - neutral_losses_count * H2O
         )
         lower_bound = min_possible_mass - err_margin(min_possible_mass, ppm_error)
         if lower_bound > target_masses[target_i]:
@@ -180,7 +188,7 @@ def fragments(
                 disconnected_cys=disconnected_cys,
                 connected_cys=connected_cys,
                 neutral_losses_count=neutral_losses_count,
-                max_i_per_segment=max_i_per_segment,
+                segment_cuts=segment_cuts,
                 fragment_start=fragment_start,
                 modded_residues=modded_residues,
             )
@@ -189,27 +197,39 @@ def fragments(
 
         # We can end the run
         if min_end <= i <= max_end:
+            segment = peptide.segment(i)
             # We are ending the run even though we don't need to
             premature_end = i < max_end
+            new_segment_cuts = segment_cuts.copy()
+            new_cuts = []
+            for b, e in segment_cuts[segment]:
+                if e == max_end:  # The current cut
+                    current_beg = selection[-1]
+                    if b < current_beg:
+                        new_cuts.append((b, current_beg))
+                    if i < e:
+                        new_cuts.append((i, e))
+                else:
+                    new_cuts.append((b, e))
+            new_segment_cuts[segment] = tuple(new_cuts)
 
-            current_segment = peptide.segment(i)
-            new_max_i_per_segment = max_i_per_segment.copy()
-            new_max_i_per_segment[current_segment] = i
+            open_end = i < peptide.segment_end(segment)
 
-            # End the run
-            start_new_run(
-                new_max_i_per_segment,
-                pivots,
-                breaks_left - premature_end,
-                fragment_start,
-                target_i,
-                current_mass + (B_ION_MOD if premature_end else OH),
-                selection + (i,),
-                modded_residues,
-                disconnected_cys,
-                connected_cys,
-                neutral_losses_count + premature_end,
-            )
+            if not premature_end or breaks_left > 0:
+                # End the run
+                start_new_run(
+                    segment_cuts=new_segment_cuts,
+                    pivots=pivots,
+                    breaks_left=breaks_left - premature_end,
+                    fragment_start=fragment_start,
+                    target_i=target_i,
+                    current_mass=current_mass + (B_ION_MOD if open_end else OH),
+                    selection=selection + (i,),
+                    modded_residues=modded_residues,
+                    disconnected_cys=disconnected_cys,
+                    connected_cys=connected_cys,
+                    neutral_losses_count=neutral_losses_count + open_end,
+                )
 
             if not premature_end:
                 # No point in continuing this run, there's nowhere to continue to
@@ -225,46 +245,48 @@ def fragments(
             new_modded_residues = modded_residues
 
         in_bond = (j := peptide.bond_partner(i)) is not None and residue.name == "C"
-        connected = in_bond and j in disconnected_cys
-        bond_is_new = not connected and j not in disconnected_cys
-        if in_bond and bond_is_new:
+        connected = in_bond and j in connected_cys
+        disconnected = in_bond and j in disconnected_cys
+        bond_is_new = in_bond and not (j in connected_cys or j in disconnected_cys)
+
+        if bond_is_new:
             # We create two branches: one where the bond is kept...
             if j > fragment_start:
                 # ...else we've already seen this fragment from the symmetric side
                 continue_run(
                     i + 1,
-                    target_i,
-                    min_end,
-                    max_end,
-                    current_mass + residue.mass - H2,
-                    breaks_left,
-                    sort_into(j, pivots),
-                    selection,
-                    disconnected_cys,
-                    connected_cys + (i,),
-                    neutral_losses_count,
-                    max_i_per_segment,
-                    fragment_start,
-                    modded_residues,
+                    target_i=target_i,
+                    min_end=min_end,
+                    max_end=max_end,
+                    current_mass=current_mass + residue.mass - H2,
+                    breaks_left=breaks_left,
+                    pivots=sort_into(j, pivots),
+                    selection=selection,
+                    disconnected_cys=disconnected_cys,
+                    connected_cys=connected_cys + (i,),
+                    neutral_losses_count=neutral_losses_count,
+                    segment_cuts=segment_cuts,
+                    fragment_start=fragment_start,
+                    modded_residues=modded_residues,
                 )
 
             # ...and one where it's not
             if breaks_left > 0:
                 continue_run(
                     i + 1,
-                    target_i,
-                    min_end,
-                    max_end,
-                    current_mass + residue.mass,
-                    breaks_left - 1,
-                    pivots,
-                    selection,
-                    disconnected_cys + (i,),
-                    connected_cys,
-                    neutral_losses_count,
-                    max_i_per_segment,
-                    fragment_start,
-                    modded_residues,
+                    target_i=target_i,
+                    min_end=min_end,
+                    max_end=max_end,
+                    current_mass=current_mass + residue.mass,
+                    breaks_left=breaks_left - 1,
+                    pivots=pivots,
+                    selection=selection,
+                    disconnected_cys=disconnected_cys + (i,),
+                    connected_cys=connected_cys,
+                    neutral_losses_count=neutral_losses_count,
+                    segment_cuts=segment_cuts,
+                    fragment_start=fragment_start,
+                    modded_residues=modded_residues,
                 )
         else:
             # Add current residue, continue the run
@@ -279,17 +301,17 @@ def fragments(
                 pivots=pivots,
                 selection=selection,
                 disconnected_cys=(disconnected_cys + (i,))
-                if not connected
+                if disconnected
                 else disconnected_cys,
                 connected_cys=(connected_cys + (i,)) if connected else connected_cys,
                 neutral_losses_count=neutral_losses_count,
-                max_i_per_segment=max_i_per_segment,
+                segment_cuts=segment_cuts,
                 fragment_start=fragment_start,
                 modded_residues=new_modded_residues,
             )
 
     def start_new_run(
-        max_i_per_segment: Dict[int, int],
+        segment_cuts: SegmentCuts,
         pivots: Tuple[int, ...],
         breaks_left: int,
         fragment_start: int,
@@ -308,8 +330,6 @@ def fragments(
         if len(pivots) == 0:
             potential_mods = []
 
-            final_mass = current_mass
-
             for res, seen in modded_residues.items():
                 peptide_mod, must_have = peptide.modification_on(res)
 
@@ -317,8 +337,6 @@ def fragments(
 
                 for _ in range(minimum_mods):
                     potential_mods.append([peptide_mod])
-
-                final_mass += minimum_mods * peptide_mod.mass
 
                 # How many can I have
                 maximum_mods = min(must_have, seen)
@@ -372,11 +390,11 @@ def fragments(
             valid_targets = [
                 i
                 for i, t in enumerate(target_masses)
-                if target_masses[target_i] <= t <= target_masses[target_i] + 85
+                if target_masses[target_i] <= t <= target_masses[target_i] + 190
             ]
 
             for target_i in valid_targets:
-                combinations = combine_modifications_2(
+                combinations = combine_modifications(
                     potential_mods,
                     starting_mass=current_mass,
                     target_mass=target_masses[target_i],
@@ -404,48 +422,51 @@ def fragments(
 
         pivot = pivots[0]
         segment = peptide.segment(pivot)
-        current_segment_beginning = peptide.segment_beginning(segment)
-        current_segment_max_i = max_i_per_segment[segment]
 
-        beg_start = max(
-            current_segment_max_i,
-            fragment_start,
-        )
-        beg_end = pivot
+        applicable_cuts = [(b, e) for b, e in segment_cuts[segment] if b <= pivot < e]
+        if not applicable_cuts:
+            return
+        cut_beginning, cut_end = applicable_cuts[0]
 
-        end_start = pivot + 1
-        end_end = peptide.segment_end(segment)
+        min_beginning = max(cut_beginning, fragment_start)
+        max_beginning = pivot
+        min_end = pivot + 1
+        max_end = peptide.segment_end(segment)
 
-        first_in_segment = max_i_per_segment[segment] == current_segment_beginning
-        shift_optim = max_i_per_segment[segment] != pivot and not first_in_segment
+        segment_beginning = peptide.segment_beginning(segment)
+        first_in_segment = cut_beginning == segment_beginning
+        shift_optim = min_beginning != pivot and not first_in_segment
 
-        for b in range(beg_start + shift_optim, beg_end + 1):
-            is_break = b > beg_start or (
-                b == fragment_start and b > current_segment_beginning
-            )
+        for b in range(min_beginning + shift_optim, max_beginning + 1):
+            is_break = b > cut_beginning
+            is_open = b > segment_beginning
 
             if not is_break or breaks_left > 0:
                 continue_run(
                     b,
                     target_i=target_i,
-                    min_end=end_start,
-                    max_end=end_end,
-                    current_mass=current_mass + (Y_ION_MOD if is_break else PROTON),
+                    min_end=min_end,
+                    max_end=max_end,
+                    current_mass=current_mass + (Y_ION_MOD if is_open else PROTON),
                     breaks_left=breaks_left - is_break,
                     pivots=pivots[1:],
                     selection=selection + (b,),
                     disconnected_cys=disconnected_cys,
                     connected_cys=connected_cys,
-                    neutral_losses_count=neutral_losses_count + is_break,
-                    max_i_per_segment=max_i_per_segment,
+                    neutral_losses_count=neutral_losses_count + is_open,
+                    segment_cuts=segment_cuts,
                     fragment_start=fragment_start,
                     modded_residues=modded_residues,
                 )
 
     for b in peptide:
-        pointers = {s: peptide.segment_beginning(s) for s in range(peptide.segments)}
         start_new_run(
-            pointers, pivots=(b,), breaks_left=allowed_breaks, fragment_start=b
+            segment_cuts={
+                s: (peptide.segment_bounds(s),) for s in range(peptide.segments)
+            },
+            pivots=(b,),
+            breaks_left=allowed_breaks,
+            fragment_start=b,
         )
 
     return result
@@ -559,9 +580,13 @@ if __name__ == "__main__":
                 while True:
                     precursor_matches.append(pickle.load(f))
             finally:
-                for match in tqdm.tqdm(precursor_matches[200:600]):
+                for match in tqdm.tqdm(precursor_matches[:600]):
                     measurement: PeptideMeasurement = match["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
+
+                    if measurement.scan >= 3916:
+                        print(measurement.scan)
+                        continue
 
                     for precursor in match["matches"]:
                         targets = []
@@ -582,10 +607,10 @@ if __name__ == "__main__":
                                     (
                                         {
                                             "fragment_mz": frag,
-                                            "charge": ch,
                                             "intensity": intensity,
-                                            "total_intensity": total_intensity,
-                                            "score": intensity / total_intensity,
+                                            "charge": ch,
+                                            # "total_intensity": total_intensity,
+                                            # "score": intensity / total_intensity,
                                         },
                                         frag * ch - PROTON * ch,
                                     ),
@@ -611,13 +636,19 @@ if __name__ == "__main__":
                             )
 
                             for i, m in matches:
+                                # to_print = {
+                                #     "measurement": measurement,
+                                #     "multipeptide": multiprotein,
+                                #     "bonds": bonds,
+                                #     "match": m,
+                                # } | targets[i][0]
                                 to_print = {
-                                    "measurement": measurement,
-                                    "multipeptide": multiprotein,
+                                    "scan": measurement.scan,
+                                    "precursor_sequence": multip_str,
                                     "bonds": bonds,
                                     "match": m,
                                 } | targets[i][0]
-                                of.write(f"{to_print}")
+                                of.write(f"{to_print}\n")
                                 # pickle.dump(to_print, of)
 
                 end_time = time.time()
