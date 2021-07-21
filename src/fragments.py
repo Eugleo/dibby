@@ -580,7 +580,7 @@ if __name__ == "__main__":
                 while True:
                     precursor_matches.append(pickle.load(f))
             finally:
-                for match in tqdm.tqdm(precursor_matches[:600]):
+                for match in tqdm.tqdm(precursor_matches):
                     measurement: PeptideMeasurement = match["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
 
