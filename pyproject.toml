@@ -16,6 +16,7 @@ lxml = "^4.6.3"
 notebook = "^6.3.0"
 jupyter = "^1.0.0"
 tqdm = "^4.60.0"
+matplotlib = "^3.4.2"
 
 [tool.poetry.dev-dependencies]
 
