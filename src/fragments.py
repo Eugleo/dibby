@@ -581,8 +581,8 @@ if __name__ == "__main__":
     import time
 
     precursors_file = "../out/precursor_matches_lys_at_2_inter_bonds.pickle"
-    # fragments_file = "../out/fragment_matches_lys_at_2_inter_bonds.pickle"
-    fragments_file = "../out/fragments_matches.txt"
+    fragments_file = "../out/fragment_matches_lys_at_2_inter_bonds.pickle"
+    # fragments_file = "../out/fragments_matches.txt"
 
     peptides = []
     for b, e in trypsin(LYS):
@@ -593,14 +593,14 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    with open(fragments_file, "w") as of:
+    with open(fragments_file, "wb") as of:
         with open(precursors_file, "rb") as f:
             precursor_matches = []
             try:
                 while True:
                     precursor_matches.append(pickle.load(f))
             finally:
-                for match in tqdm.tqdm(precursor_matches[:600]):
+                for match in tqdm.tqdm(precursor_matches):
                     measurement: PeptideMeasurement = match["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
 
