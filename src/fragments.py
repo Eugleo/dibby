@@ -364,14 +364,21 @@ def fragments(
                     continue
 
                 if symmetric:
-                    potential_mods.append([Mod("-SSH + () or -SH + =S", -H2)])
+                    potential_mods.append(
+                        [
+                            Mod(
+                                f"{c}, {j}: –SSH | ()– or –SH | S=",
+                                -H2,
+                            )
+                        ]
+                    )
                 else:
                     potential_mods.append(
                         [
-                            Mod("–SSH", SULPHUR),
-                            Mod("– ()", -(SULPHUR + H2)),
-                            Mod("=S", -H2),
-                            Mod("–SH", 0),
+                            Mod(f"{c}: –SSH", SULPHUR),
+                            Mod(f"{c}: –()", -(SULPHUR + H2)),
+                            Mod(f"{c}: =S", -H2),
+                            Mod(f"{c}: –SH", 0),
                         ]
                     )
 
@@ -414,6 +421,18 @@ def fragments(
                                     total_mass, target_masses[target_i]
                                 ),
                                 "mods": modifications,
+                                "connected_bonds": [
+                                    (i, peptide.bond_partner(i))
+                                    for i in connected_cys
+                                    if i < peptide.bond_partner(i)
+                                ],
+                                "disconnected_cys": disconnected_cys,
+                                "interesting_disconnected_cys": [
+                                    c
+                                    for c in disconnected_cys
+                                    if f"{c}: –SH"
+                                    not in (m.description for m in modifications)
+                                ],
                             },
                         )
                     )
@@ -519,6 +538,7 @@ def gen_bonds(cysteines: Tuple[Tuple[int, int], ...], bonds: int, segments: int)
 
 
 import copy
+import pprint
 
 
 def gen_multip(
@@ -580,13 +600,9 @@ if __name__ == "__main__":
                 while True:
                     precursor_matches.append(pickle.load(f))
             finally:
-                for match in tqdm.tqdm(precursor_matches):
+                for match in tqdm.tqdm(precursor_matches[:600]):
                     measurement: PeptideMeasurement = match["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
-
-                    if measurement.scan >= 3916:
-                        print(measurement.scan)
-                        continue
 
                     for precursor in match["matches"]:
                         targets = []
@@ -609,8 +625,8 @@ if __name__ == "__main__":
                                             "fragment_mz": frag,
                                             "intensity": intensity,
                                             "charge": ch,
-                                            # "total_intensity": total_intensity,
-                                            # "score": intensity / total_intensity,
+                                            "total_intensity": total_intensity,
+                                            "score": intensity / total_intensity,
                                         },
                                         frag * ch - PROTON * ch,
                                     ),
@@ -636,20 +652,20 @@ if __name__ == "__main__":
                             )
 
                             for i, m in matches:
-                                # to_print = {
-                                #     "measurement": measurement,
-                                #     "multipeptide": multiprotein,
-                                #     "bonds": bonds,
-                                #     "match": m,
-                                # } | targets[i][0]
                                 to_print = {
-                                    "scan": measurement.scan,
-                                    "precursor_sequence": multip_str,
+                                    "measurement": measurement,
+                                    "multipeptide": multiprotein,
                                     "bonds": bonds,
                                     "match": m,
                                 } | targets[i][0]
-                                of.write(f"{to_print}\n")
-                                # pickle.dump(to_print, of)
+                                pickle.dump(to_print, of)
+                                # to_print = {
+                                #     "scan": measurement.scan,
+                                #     "precursor_sequence": multip_str,
+                                #     "bonds": bonds,
+                                #     "match": m,
+                                # } | targets[i][0]
+                                # of.write(f"{pprint.pformat(to_print)}\n")
 
                 end_time = time.time()
                 print(f"It took {end_time - start_time} seconds")
