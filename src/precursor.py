@@ -220,7 +220,7 @@ def match_precursors(
                 max_other_bonds = free_cys_count // 2
                 for _ in range(max_other_bonds):
                     possible_mods.append(
-                        [Mod("cys_pair_alk", alkylation_mass * 2), None]
+                        [Mod("Alkylated Cys Pair", alkylation_mass * 2), None]
                     )
 
                 if has_alkylated_cys:
@@ -329,11 +329,9 @@ if __name__ == "__main__":
     peptides = []
     for b, e in trypsin(protein):
         seq = protein[b:e]
-        met_ox = (Mod("met_ox", 15.9949), sum(aa == "M" for aa in seq))
+        met_ox = (Mod("Met Oxidation", 15.9949), sum(aa == "M" for aa in seq))
         mods = {"M": met_ox} if "M" in seq else {}
         peptides.append(Peptide(b, e, seq, modifications=mods))
-
-    print(protein)
 
     start_time = time.time()
     with open(args.output, "wb") as f:
@@ -342,7 +340,7 @@ if __name__ == "__main__":
                 peptides,
                 measurement,
                 alkylation_mass=57.0214,
-                max_segments=3,
+                max_segments=4,
                 error_ppm=15,
             )
             if matches:
