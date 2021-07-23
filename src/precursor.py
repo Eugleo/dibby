@@ -181,7 +181,7 @@ def match_precursors(
     max_segments: int,
     alkylation_mass: float = 57.0214,
     error_ppm: int = 10,
-) -> List[str]:
+) -> List:
     target_mass = measurement.peptide_mass_estimate
     h2o = mass.calculate_mass(formula="H2O")
     h2 = mass.calculate_mass(formula="H2")
@@ -253,6 +253,7 @@ def match_precursors(
                             {
                                 "sequence": seq,
                                 "ranges": ranges,
+                                "missed_cleavages": max(e - b for b, e in ranges) - 1,
                                 "cys_bonds": other_bonds + joining_bonds,
                                 "mass": total_mass,
                                 "error": compute_error(total_mass, target_mass),
@@ -340,11 +341,11 @@ if __name__ == "__main__":
                 peptides,
                 measurement,
                 alkylation_mass=57.0214,
-                max_segments=4,
+                max_segments=6,
                 error_ppm=15,
             )
-            if matches:
-                pickle.dump({"measurement": measurement, "matches": matches}, f)
+            for m in matches:
+                pickle.dump({"measurement": measurement} | m, f)
 
     end_time = time.time()
 
