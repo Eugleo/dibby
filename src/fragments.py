@@ -628,11 +628,7 @@ if __name__ == "__main__":
     data_path = f"../out/precursor_matches/{args.protein}_{args.type}_segments={args.segments}_error={args.error}ppm.pickle"
     output_path = f"../out/fragment_matches/{args.protein}_{args.type}_segments={args.segments}_breaks={args.breaks}_error={args.error}ppm.pickle"
 
-    # precursors_file = "../out/precursor_matches_lys_at_6_segments.pickle"
     # fragments_file = "../out/fragment_matches_lys_at_6_segments_3_breaks.pickle"
-    # fragments_file = "../out/fragment_matches_lys_at_6_segments_2_breaks.pickle"
-    # fragments_file = "../out/fragment_matches_lys_testing.pickle"
-    # fragments_file = "../out/fragments_matches.txt"
 
     protein = [r.sequence for r in fasta.read(seq_path)][0]
     peptides = []

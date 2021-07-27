@@ -32,6 +32,7 @@ def linear_decay_multiplier(soft_ppm, hard_ppm):
 class PeptideMeasurement:
     def __init__(
         self,
+        id,
         scan,
         time,
         charge,
@@ -41,6 +42,7 @@ class PeptideMeasurement:
         fragments_mz,
         fragments_intensity,
     ):
+        self.id = id
         self.scan = scan
         self.time = time
         self.charge = charge
@@ -102,7 +104,7 @@ def read_mgf(path):
     returns (scan ID, time, charge, mz, mass estimate)
     """
     with mgf.read(path) as reader:
-        for i in reader:
+        for id, i in enumerate(reader):
             scan = int(re.match(".* scan=([0-9]+)", i["params"]["title"])[1])
             time = i["params"]["rtinseconds"]
             chargelist = i["params"]["charge"]
@@ -118,6 +120,7 @@ def read_mgf(path):
             fragments_intensity = i["intensity array"]
 
             yield PeptideMeasurement(
+                id,
                 scan,
                 time,
                 charge,
