@@ -313,19 +313,41 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser(description="Save precursor matches for given scans")
 
     # Add the arguments
-    args.add_argument("--scans", type=str, required=True, help="path to the mgf file")
     args.add_argument(
-        "--protein", type=str, required=True, help="path to the protein fasta"
+        "--protein",
+        type=str,
+        required=True,
+        help="protein code (usually three letters)",
     )
     args.add_argument(
-        "--output", type=str, required=True, help="path to the output pickle file"
+        "--type",
+        type=str,
+        choices=["AT", "RAT"],
+        required=True,
+        help="measurement type (AT/RAT)",
+    )
+    args.add_argument(
+        "--error",
+        type=int,
+        required=True,
+        help="allowed measurement error in ppm",
+    )
+    args.add_argument(
+        "--segments",
+        type=int,
+        required=True,
+        help="upper bound of segment count in matched precursors",
     )
 
     # Execute the parse_args() method
     args = args.parse_args()
 
-    measurements = {m.scan: m for m in read_mgf(args.scans)}
-    protein = [r.sequence for r in fasta.read(args.protein)][0]
+    data_path = f"../data/mgf/190318_{args.protein}_{args.type}_50x_05.mgf"
+    seq_path = f"../data/fasta/{args.protein}.fasta"
+    output_path = f"../out/precursor_matches/{args.protein}_{args.type}_segments={args.segments}_error={args.error}ppm.pickle"
+
+    measurements = {m.scan: m for m in read_mgf(data_path)}
+    protein = [r.sequence for r in fasta.read(seq_path)][0]
 
     peptides = []
     for b, e in trypsin(protein):
@@ -335,14 +357,14 @@ if __name__ == "__main__":
         peptides.append(Peptide(b, e, seq, modifications=mods))
 
     start_time = time.time()
-    with open(args.output, "wb") as f:
+    with open(output_path, "wb") as f:
         for scan, measurement in tqdm.tqdm(measurements.items()):
             matches = match_precursors(
                 peptides,
                 measurement,
                 alkylation_mass=57.0214,
-                max_segments=6,
-                error_ppm=15,
+                max_segments=args.segments,
+                error_ppm=args.error,
             )
             for m in matches:
                 pickle.dump({"measurement": measurement} | m, f)

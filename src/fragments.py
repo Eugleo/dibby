@@ -4,7 +4,7 @@ from typing import Dict, Tuple, Optional, List, Union
 
 import tqdm
 from pyteomics import mass
-from common import LYS
+from common import LYS, BSA
 
 from precursor import Mod, Peptide, Residue, err_margin, compute_error, within_bounds
 
@@ -249,6 +249,8 @@ def fragments(
         disconnected = in_bond and j in disconnected_cys
         bond_is_new = in_bond and not (j in connected_cys or j in disconnected_cys)
 
+        assert not (j in connected_cys and j in disconnected_cys)
+
         if bond_is_new:
             # We create two branches: one where the bond is kept...
             if j > fragment_start:
@@ -397,7 +399,7 @@ def fragments(
             valid_targets = [
                 i
                 for i, t in enumerate(target_masses)
-                if target_masses[target_i] <= t <= target_masses[target_i] + 190
+                if target_masses[target_i] <= t <= target_masses[target_i] + 250
             ]
 
             for target_i in valid_targets:
@@ -417,6 +419,7 @@ def fragments(
                                 "seq": seq,
                                 "ranges": ranges,
                                 "mass": total_mass,
+                                "breaks": allowed_breaks - breaks_left,
                                 "error": compute_error(
                                     total_mass, target_masses[target_i]
                                 ),
@@ -553,7 +556,6 @@ def gen_multip(
             else:
                 segment += p
         segments.append(segment)
-
     total_bonds = d["cys_bonds"]
 
     if total_bonds < len(segments) - 1:
@@ -579,93 +581,146 @@ def gen_multip(
 
 if __name__ == "__main__":
     import time
+    import argparse
+    from pyteomics import fasta
 
-    precursors_file = "../out/precursor_matches_lys_at_2_inter_bonds.pickle"
-    fragments_file = "../out/fragment_matches_lys_at_2_inter_bonds.pickle"
+    args = argparse.ArgumentParser(
+        description="Save fragment matches for given precursors"
+    )
+
+    # Add the arguments
+    args.add_argument(
+        "--protein",
+        type=str,
+        required=True,
+        help="protein code (usually three letters)",
+    )
+    args.add_argument(
+        "--type",
+        type=str,
+        choices=["AT", "RAT"],
+        required=True,
+        help="measurement type (AT/RAT)",
+    )
+    args.add_argument(
+        "--error",
+        type=int,
+        required=True,
+        help="allowed measurement error in ppm",
+    )
+    args.add_argument(
+        "--breaks",
+        type=int,
+        required=True,
+        help="upper bound of breaks in matched fragments",
+    )
+    args.add_argument(
+        "--segments",
+        type=int,
+        required=True,
+        help="upper bound of segment count in matched precursors",
+    )
+
+    # Execute the parse_args() method
+    args = args.parse_args()
+
+    seq_path = f"../data/fasta/{args.protein}.fasta"
+    data_path = f"../out/precursor_matches/{args.protein}_{args.type}_segments={args.segments}_error={args.error}ppm.pickle"
+    output_path = f"../out/fragment_matches/{args.protein}_{args.type}_segments={args.segments}_breaks={args.breaks}_error={args.error}ppm.pickle"
+
+    # precursors_file = "../out/precursor_matches_lys_at_6_segments.pickle"
+    # fragments_file = "../out/fragment_matches_lys_at_6_segments_3_breaks.pickle"
+    # fragments_file = "../out/fragment_matches_lys_at_6_segments_2_breaks.pickle"
+    # fragments_file = "../out/fragment_matches_lys_testing.pickle"
     # fragments_file = "../out/fragments_matches.txt"
 
+    protein = [r.sequence for r in fasta.read(seq_path)][0]
     peptides = []
-    for b, e in trypsin(LYS):
-        seq = LYS[b:e]
-        met_ox = (Mod("met_ox", 15.9949), sum(aa == "M" for aa in seq))
+    for b, e in trypsin(protein):
+        seq = BSA[b:e]
+        met_ox = (Mod("Met Oxidation", 15.9949), sum(aa == "M" for aa in seq))
         mods = {"M": met_ox} if "M" in seq else {}
         peptides.append(Peptide(b, e, seq, modifications=mods))
 
     start_time = time.time()
 
-    with open(fragments_file, "wb") as of:
-        with open(precursors_file, "rb") as f:
+    with open(output_path, "wb") as of:
+        with open(data_path, "rb") as f:
             precursor_matches = []
             try:
                 while True:
                     precursor_matches.append(pickle.load(f))
             finally:
-                for match in tqdm.tqdm(precursor_matches):
-                    measurement: PeptideMeasurement = match["measurement"]
+                # Skončil jsem 1108/3231 v ../out/fragment_matches_lys_at_6_segments_3_breaks.pickle
+                # NEZAPOMENOUT TAM DÁT APPEND
+                for precursor in tqdm.tqdm(precursor_matches):
+                    measurement: PeptideMeasurement = precursor["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
 
-                    for precursor in match["matches"]:
-                        targets = []
-                        for frag, intensity in zip(
+                    targets = []
+                    for frag_id, (frag, intensity) in enumerate(
+                        zip(
                             measurement.fragments_mz,
                             measurement.fragments_intensity,
-                        ):
-                            coef = measurement.charge * PROTON + precursor["mass"]
-                            max_charge = min(
-                                measurement.charge,
-                                math.trunc(
-                                    coef / (frag - err_margin(frag, error_ppm=10))
+                        )
+                    ):
+                        coef = measurement.charge * PROTON + precursor["mass"]
+                        max_charge = min(
+                            measurement.charge,
+                            math.trunc(coef / (frag - err_margin(frag, error_ppm=15))),
+                        )
+
+                        for ch in range(1, max_charge + 1):
+                            targets.append(
+                                (
+                                    {
+                                        "fragment_id": frag_id,
+                                        "fragment_mz": frag,
+                                        "intensity": intensity,
+                                        "charge": ch,
+                                        "total_intensity": total_intensity,
+                                        "score": intensity / total_intensity,
+                                    },
+                                    frag * ch - PROTON * ch,
                                 ),
                             )
+                    targets = sorted(targets, key=lambda t: t[1])
 
-                            for ch in range(1, max_charge + 1):
-                                targets.append(
-                                    (
-                                        {
-                                            "fragment_mz": frag,
-                                            "intensity": intensity,
-                                            "charge": ch,
-                                            "total_intensity": total_intensity,
-                                            "score": intensity / total_intensity,
-                                        },
-                                        frag * ch - PROTON * ch,
-                                    ),
-                                )
-                        targets = sorted(targets, key=lambda t: t[1])
+                    for multiprotein, bonds in gen_multip(peptides, precursor):
+                        matches = fragments(
+                            [t for _, t in targets],
+                            multiprotein,
+                            allowed_breaks=2,
+                            ppm_error=15,
+                        )
 
-                        for multiprotein, bonds in gen_multip(peptides, precursor):
-                            matches = fragments(
-                                [t for _, t in targets],
-                                multiprotein,
-                                allowed_breaks=2,
-                            )
+                        multip_str = str(multiprotein)
 
-                            multip_str = str(multiprotein)
+                        matches = sorted(
+                            matches,
+                            # key=lambda m: m[0],
+                            key=lambda m: (
+                                targets[m[0]][0]["fragment_mz"],
+                                targets[m[0]][0]["charge"],
+                            ),
+                        )
 
-                            matches = sorted(
-                                matches,
-                                # key=lambda m: m[0],
-                                key=lambda m: (
-                                    targets[m[0]][0]["fragment_mz"],
-                                    targets[m[0]][0]["charge"],
-                                ),
-                            )
-
-                            for i, m in matches:
-                                to_print = {
-                                    "measurement": measurement,
-                                    "multipeptide": multiprotein,
-                                    "bonds": bonds,
-                                    "match": m,
-                                } | targets[i][0]
-                                pickle.dump(to_print, of)
-                                # to_print = {
-                                #     "scan": measurement.scan,
-                                #     "precursor_sequence": multip_str,
-                                #     "bonds": bonds,
-                                #     "match": m,
-                                # } | targets[i][0]
-                                # of.write(f"{pprint.pformat(to_print)}\n")
+                        for i, m in matches:
+                            to_print = {
+                                "measurement": measurement,
+                                "precursor": precursor,  # TODO REMOVE WHEN RUNNING=3
+                                "multipeptide": multiprotein,
+                                "bonds": bonds,
+                                "match": m,
+                            } | targets[i][0]
+                            pickle.dump(to_print, of)
+                            # to_print = {
+                            #     "scan": measurement.scan,
+                            #     "precursor_sequence": multip_str,
+                            #     "bonds": bonds,
+                            #     "match": m,
+                            # } | targets[i][0]
+                            # of.write(f"{pprint.pformat(to_print)}\n")
 
                 end_time = time.time()
                 print(f"It took {end_time - start_time} seconds")
