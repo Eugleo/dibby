@@ -1,4 +1,5 @@
 import pickle
+import pprint
 from typing import Tuple, List, Optional
 
 from pyteomics import mass
@@ -6,7 +7,14 @@ from pyteomics import mass
 from measurement import read_mgf, Scan
 from protein import trypsin
 from src.common import err_margin, combine_modifications, compute_error
-from src.peptide import Peptide, Mod, IAA_ALKYLATION, IAA_PAIR_ALKYLATION, MET_OXIDATION
+from src.peptide import (
+    Peptide,
+    Mod,
+    IAA_ALKYLATION,
+    IAA_PAIR_ALKYLATION,
+    MET_OXIDATION,
+    CYS_BOND,
+)
 
 
 def match_precursors(
@@ -34,7 +42,12 @@ def match_precursors(
         waiting_for_cys: bool = False,
     ) -> None:
         has_alkylated_cys = free_cys_count % 2 == 1
-        min_realistic_mass = min_mass + alkylation_mod.mass * has_alkylated_cys
+        max_other_bonds = free_cys_count // 2
+        min_realistic_mass = (
+            min_mass
+            + alkylation_mod.mass * has_alkylated_cys
+            + (CYS_BOND.mass * max_other_bonds)
+        )
         lower_bound = min_realistic_mass - err_margin(min_realistic_mass, error_ppm)
 
         if not waiting_for_cys:
@@ -50,9 +63,8 @@ def match_precursors(
                         for m, count in p.modifications_anywhere:
                             possible_mods += [[m, None]] * count
 
-                max_other_bonds = free_cys_count // 2
                 for _ in range(max_other_bonds):
-                    possible_mods.append([IAA_PAIR_ALKYLATION, None])
+                    possible_mods.append([IAA_PAIR_ALKYLATION, CYS_BOND])
 
                 if has_alkylated_cys:
                     # One Cys has to be alkylated, because it can't be in a bond
@@ -73,20 +85,17 @@ def match_precursors(
 
                     for modifications in mod_combinations:
                         total_mass = base_mass + sum(m.mass for m in modifications)
-
-                        alkylated_pairs = sum(
-                            m.description == "Alkylated Cys Pair" for m in modifications
-                        )
                         joining_bonds = (max_segments - segments_left) - 1
-                        other_bonds = max_other_bonds - alkylated_pairs
-
+                        other_bonds = sum(m == CYS_BOND for m in modifications)
                         mcs = [(e - b) - 1 for b, e in ranges]
+
                         result.append(
                             {
                                 "scan": scan,
                                 "scan_id": scan.id,
                                 "scan_mass": scan.prec_mass,
                                 "prec_sequence": sequence,
+                                "prec_segments": (max_segments - segments_left),
                                 "prec_tryptide_ranges": ranges,
                                 "prec_residue_ranges": [
                                     (peptides[start].beginning, peptides[end - 1].end)

@@ -11,7 +11,8 @@ class Mod:
 
 
 IAA_ALKYLATION = Mod("Cys Alkylation (IAA)", 57.0214)
-IAA_PAIR_ALKYLATION = Mod("Cys Pair Alkylation (IAA)", IAA_ALKYLATION.mass * 2)
+IAA_PAIR_ALKYLATION = Mod("2x Cys Alkylation (IAA)", IAA_ALKYLATION.mass * 2)
+CYS_BOND = Mod("Disulphide Bond (–H2)", -calculate_mass(formula="H2"))
 MET_OXIDATION = Mod("Met Oxidation", 15.9949)
 
 
