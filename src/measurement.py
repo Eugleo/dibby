@@ -29,26 +29,26 @@ def linear_decay_multiplier(soft_ppm, hard_ppm):
     return multiplier
 
 
-class PeptideMeasurement:
+class Scan:
     def __init__(
         self,
+        nth_in_order,
         id,
-        scan,
         time,
         charge,
-        peptide_mz,
-        peptide_intensity,
-        peptide_mass_estimate,
+        prec_mz,
+        prec_intensity,
+        prec_mass,
         fragments_mz,
         fragments_intensity,
     ):
+        self.nth_in_order = nth_in_order
         self.id = id
-        self.scan = scan
         self.time = time
-        self.charge = charge
-        self.peptide_mz = peptide_mz
-        self.peptide_intensity = peptide_intensity
-        self.peptide_mass_estimate = peptide_mass_estimate
+        self.prec_charge = charge
+        self.prec_mz = prec_mz
+        self.prec_intensity = prec_intensity
+        self.prec_mass = prec_mass
         nonzero = fragments_intensity >= 0.01 * np.max(fragments_intensity)
         indices = np.argsort(fragments_mz[nonzero])
 
@@ -64,12 +64,12 @@ class PeptideMeasurement:
     def to_dicts(self):
         for mz, intenzity in zip(self.fragments_mz, self.fragments_intensity):
             yield {
-                "scan": self.scan,
+                "scan": self.id,
                 "time": self.time,
-                "charge": self.charge,
-                "peptide_mz": self.peptide_mz,
-                "peptide_intensity": self.peptide_intensity,
-                "peptide_mass_estimate": self.peptide_mass_estimate,
+                "charge": self.prec_charge,
+                "peptide_mz": self.prec_mz,
+                "peptide_intensity": self.prec_intensity,
+                "peptide_mass_estimate": self.prec_mass,
                 "fragment_mz": mz,
                 "fragment_intensity": intenzity,
             }
@@ -119,7 +119,7 @@ def read_mgf(path):
             fragments_mz = i["m/z array"]
             fragments_intensity = i["intensity array"]
 
-            yield PeptideMeasurement(
+            yield Scan(
                 id,
                 scan,
                 time,

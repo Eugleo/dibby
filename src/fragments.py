@@ -11,7 +11,7 @@ import sys
 
 sys.setrecursionlimit(10000)
 
-from src.measurement import PeptideMeasurement
+from src.measurement import Scan
 from src.protein import trypsin
 
 
@@ -95,30 +95,7 @@ class MultiP:
         return self._segments[segment].end
 
     def __str__(self):
-        return "+".join(s.seq for s in self._segments)
-
-
-def combine_modifications(
-    modifications: List[List[Union[Mod, None]]],
-    starting_mass: float,
-    target_mass: float,
-    ppm_error: float = 10,
-) -> List[List[Mod]]:
-    result = []
-
-    def go(i, current, selection):
-        if i == len(modifications):
-            if within_bounds(current, target_mass, ppm_error):
-                result.append(selection)
-        else:
-            for m in modifications[i]:
-                if m is None:
-                    go(i + 1, current, selection)
-                else:
-                    go(i + 1, current + m.mass, selection + (m,))
-
-    go(0, current=starting_mass, selection=())
-    return list(set(result))
+        return "+".join(s.sequence for s in self._segments)
 
 
 OH = mass.calculate_mass(formula="OH")
@@ -649,7 +626,7 @@ if __name__ == "__main__":
                 # Skončil jsem 1108/3231 v ../out/fragment_matches_lys_at_6_segments_3_breaks.pickle
                 # NEZAPOMENOUT TAM DÁT APPEND
                 for precursor in tqdm.tqdm(precursor_matches):
-                    measurement: PeptideMeasurement = precursor["measurement"]
+                    measurement: Scan = precursor["measurement"]
                     total_intensity = sum(measurement.fragments_intensity)
 
                     targets = []
@@ -659,9 +636,9 @@ if __name__ == "__main__":
                             measurement.fragments_intensity,
                         )
                     ):
-                        coef = measurement.charge * PROTON + precursor["mass"]
+                        coef = measurement.prec_charge * PROTON + precursor["mass"]
                         max_charge = min(
-                            measurement.charge,
+                            measurement.prec_charge,
                             math.trunc(
                                 coef / (frag - err_margin(frag, error_ppm=args.error))
                             ),
