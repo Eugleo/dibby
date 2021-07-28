@@ -2,29 +2,8 @@ import re
 
 from pyteomics import mgf, mass, mzid
 import numpy as np
-from protein import Peptide
 
-PROTON_MASS = mass.calculate_mass(formula="H").conjugate()
-
-
-def binary_multiplier(tolerance_ppm=10):
-    def multiplier(reference, measurement):
-        bound = (tolerance_ppm / 1e6) * reference
-        return np.where(np.abs(reference - measurement) <= bound, 1, 0)
-
-    return multiplier
-
-
-def linear_decay_multiplier(soft_ppm, hard_ppm):
-    def multiplier(reference, measurement):
-        soft = (soft_ppm / 1e6) * reference
-        hard = (hard_ppm / 1e6) * reference
-        dif = np.abs(reference - measurement)
-        return np.where(
-            dif <= soft, 1, 1 - (np.minimum(dif, hard) - soft) / (hard - soft)
-        )
-
-    return multiplier
+from src.constants import PROTON
 
 
 class Scan:
@@ -73,24 +52,6 @@ class Scan:
             "prec_charge": self.prec_charge,
         }
 
-    def score_match(
-        self, peptide: Peptide, multiplier=binary_multiplier(tolerance_ppm=10)
-    ):
-        if peptide.ismerged:
-            generated = peptide.fragment_masses
-        else:
-            generated = peptide.fragment_masses
-
-        indices = np.searchsorted(self.masses_padded, generated)
-        left = multiplier(generated, self.masses_padded[indices - 1])
-        right = multiplier(generated, self.masses_padded[indices])
-        matched_intensities = np.maximum(
-            left * self.intensities_padded[indices - 1],
-            right * self.intensities_padded[indices],
-        )
-
-        return np.sum(matched_intensities) / self.total_intensity
-
 
 def read_mgf(path):
     """
@@ -107,7 +68,7 @@ def read_mgf(path):
 
             peptide_mz = i["params"]["pepmass"][0]
             peptide_intensity = i["params"]["pepmass"][1]
-            peptide_mass_estimate = peptide_mz * charge - charge * PROTON_MASS
+            peptide_mass_estimate = peptide_mz * charge - charge * PROTON
 
             fragments_mz = i["m/z array"]
             fragments_intensity = i["intensity array"]
