@@ -3,17 +3,29 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, List, Iterator
 from pyteomics.mass import calculate_mass
 
-
-@dataclass(frozen=True, unsafe_hash=True)
-class Mod:
-    description: str
-    mass: float
+from src.modification import Modification
 
 
-IAA_ALKYLATION = Mod("Cys Alkylation (IAA)", 57.0214)
-IAA_PAIR_ALKYLATION = Mod("2x Cys Alkylation (IAA)", IAA_ALKYLATION.mass * 2)
-CYS_BOND = Mod("Disulphide Bond (–H2)", -calculate_mass(formula="H2"))
-MET_OXIDATION = Mod("Met Oxidation", 15.9949)
+def trypsin(protein):
+    last = 0
+    result = []
+    for i in range(len(protein) - 1):
+        if protein[i] in ["K", "R"] and protein[i + 1] != "P":
+            result.append((last, i + 1))
+            last = i + 1
+    result.append((last, len(protein)))
+    return result
+
+
+def pepsin(protein):
+    last = 0
+    result = []
+    for i in range(len(protein) - 1):
+        if protein[i] in ["F", "L", "W", "Y", "A", "E", "Q"]:
+            result.append((last, i + 1))
+            last = i + 1
+    result.append((last, len(protein)))
+    return result
 
 
 @dataclass(init=False, frozen=True)
@@ -42,7 +54,7 @@ class Peptide:
     mid_mass: float
     max_mass: float
 
-    modifications: Dict[str, Tuple[Mod, int]]
+    modifications: Dict[str, Tuple[Modification, int]]
     _residues: List[Residue]
     _residue_counts: Dict[str, int] = None
     _mass = None
@@ -54,7 +66,7 @@ class Peptide:
         beginning: int,
         end: int,
         sequence: str,
-        modifications: Dict[str, Tuple[Mod, int]],
+        modifications: Dict[str, Tuple[Modification, int]],
     ):
         self.beginning = beginning
         self.end = end
@@ -111,7 +123,7 @@ class Peptide:
         return self._residue_counts[amino_acid]
 
     @property
-    def modifications_anywhere(self) -> Iterator[Tuple[Mod, int]]:
+    def modifications_anywhere(self) -> Iterator[Tuple[Modification, int]]:
         return (x for x in self.modifications.values())
 
     @property

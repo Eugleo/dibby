@@ -1,240 +1,113 @@
-import pickle
-import pprint
-from typing import Tuple, List, Optional
+import dataclasses
+from typing import List, Tuple
 
-from pyteomics import mass
-
-from measurement import read_mgf, Scan
-from protein import trypsin
-from src.common import err_margin, combine_modifications, compute_error
-from src.peptide import (
-    Peptide,
-    Mod,
-    IAA_ALKYLATION,
-    IAA_PAIR_ALKYLATION,
-    MET_OXIDATION,
-    CYS_BOND,
-)
+from src.scan import Scan
+from src.peptide import Peptide
+from src.modification import Modification, MET_OXIDATION
+from src.variant import Variant
 
 
-def match_precursors(
-    peptides: List[Peptide],
-    scan: Scan,
-    max_segments: int,
-    alkylation_mod: Mod = IAA_ALKYLATION,
-    error_ppm: float = 10,
-) -> List:
-    target_mass = scan.prec_mass
-    H2O = mass.calculate_mass(formula="H2O")
-    H2 = mass.calculate_mass(formula="H2")
-    H = mass.calculate_mass(formula="H")
+@dataclasses.dataclass(frozen=True)
+class Precursor:
+    sequence: str
+    mass: float
+    mz: float
+    segments: List[Tuple[int, int]]
+    residue_ranges: List[Tuple[int, int]]
+    cys_bond_count: int
+    alkylation_count: int
+    modifications: List[Modification]
+    error_ppm: float
 
-    result = []
+    def to_dict(self):
+        mcs = [(e - b) - 1 for b, e in self.segments]
+        return {
+            "prec_sequence": self.sequence,
+            "prec_segment_count": len(self.segments),
+            "prec_tryptide_ranges": self.segments,
+            "prec_residue_ranges": self.residue_ranges,
+            "prec_max_mc_count": max(mcs),
+            "prec_mc": mcs,
+            "prec_cys_bond_count": self.cys_bond_count,
+            "prec_mass": self.mass,
+            "prec_mz": self.mz,
+            "prec_error": self.error_ppm,
+            "prec_alkylation_count": self.alkylation_count,
+            "prec_mods": [m.description for m in self.modifications],
+        }
 
-    def go(
-        i: int,
-        segments_left: int,
-        selection: Tuple[int, ...],
-        min_mass: float = H2O,
-        base_mass: float = H2O,
-        max_mass: float = H2O,
-        free_cys_count: int = 0,
-        waiting_for_cys: bool = False,
-    ) -> None:
-        has_alkylated_cys = free_cys_count % 2 == 1
-        max_other_bonds = free_cys_count // 2
-        min_realistic_mass = (
-            min_mass
-            + alkylation_mod.mass * has_alkylated_cys
-            + (CYS_BOND.mass * max_other_bonds)
-        )
-        lower_bound = min_realistic_mass - err_margin(min_realistic_mass, error_ppm)
+    def variants(self, tryptides: List[Peptide]) -> List[Variant]:
+        segments: List[Peptide] = []
+        for sb, se in self.segments:
+            segment = tryptides[sb]
+            for p in tryptides[sb + 1 : se]:
+                segment += p
+            segments.append(segment)
+        total_bonds = self.cys_bond_count
 
-        if not waiting_for_cys:
-            max_realistic_mass = max_mass + alkylation_mod.mass * free_cys_count
-            upper_bound = max_realistic_mass + err_margin(max_realistic_mass, error_ppm)
+        if total_bonds < len(segments) - 1:
+            raise ValueError("There's more segments than bonds + 1.")
 
-            if lower_bound <= target_mass <= upper_bound:
-                ranges = list(zip(selection[::2], (selection + (i,))[1::2]))
-                possible_mods: List[List[Mod]] = []
+        cysteines = []
+        for i, s in enumerate(segments):
+            cysteines += [(c + s.beginning, i) for c in s.cysteines]
 
-                for b, e in ranges:
-                    for p in peptides[b:e]:
-                        for m, count in p.modifications_anywhere:
-                            possible_mods += [[m, None]] * count
+        result = []
+        # TODO: Add support for other types of modifications
+        met_oxs = sum(m == MET_OXIDATION for m in self.modifications)
+        mods = {"M": (MET_OXIDATION, met_oxs)}
 
-                for _ in range(max_other_bonds):
-                    possible_mods.append([IAA_PAIR_ALKYLATION, CYS_BOND])
-
-                if has_alkylated_cys:
-                    # One Cys has to be alkylated, because it can't be in a bond
-                    possible_mods.append([IAA_ALKYLATION])
-
-                mod_combinations = combine_modifications(
-                    possible_mods,
-                    starting_mass=base_mass,
-                    target_mass=target_mass,
-                    error_ppm=error_ppm,
-                )
-
-                if mod_combinations:
-                    segments = (
-                        "".join(p.sequence for p in peptides[b:e]) for b, e in ranges
-                    )
-                    sequence = "+".join(segments)
-
-                    for modifications in mod_combinations:
-                        total_mass = base_mass + sum(m.mass for m in modifications)
-                        joining_bonds = (max_segments - segments_left) - 1
-                        other_bonds = sum(m == CYS_BOND for m in modifications)
-                        mcs = [(e - b) - 1 for b, e in ranges]
-
-                        result.append(
-                            {
-                                "scan": scan,
-                                "scan_id": scan.id,
-                                "scan_mass": scan.prec_mass,
-                                "prec_sequence": sequence,
-                                "prec_segments": (max_segments - segments_left),
-                                "prec_tryptide_ranges": ranges,
-                                "prec_residue_ranges": [
-                                    (peptides[start].beginning, peptides[end - 1].end)
-                                    for start, end in ranges
-                                ],
-                                "prec_max_mc_count": max(mcs),
-                                "prec_mc": mcs,
-                                "prec_cys_bond_count": other_bonds + joining_bonds,
-                                "prec_mass": total_mass + scan.prec_charge * H,
-                                "prec_mz": (total_mass / scan.prec_charge) + H,
-                                "prec_error": compute_error(total_mass, target_mass),
-                                "prec_mods": [m.description for m in modifications],
-                            }
-                        )
-
-                    return
-
-        if i == len(peptides) or lower_bound > target_mass:
-            # Either we're out of peptides to add
-            # Or our mass is too high beyond repair
-            return
-
-        if (
-            not waiting_for_cys
-            and min(segments_left, free_cys_count) > 0
-            and selection[-1] != i  # Can't end if we just started
+        for bonds in Precursor._gen_bonds(
+            tuple(cysteines), total_bonds, len(segments) - 1
         ):
-            # End current run, begin the next one
-            for next_beginning in range(i, len(peptides)):
+            result.append(Variant(segments, bonds, mods))
+
+        return result
+
+    @staticmethod
+    def _gen_bonds(cysteines: Tuple[Tuple[int, int], ...], bonds: int, segments: int):
+        result = []
+
+        def go(
+            cysteines_left: Tuple[Tuple[int, int], ...],
+            bonds_left: int,
+            segment_connections: Tuple[Tuple[int, int], ...],
+            current_bonds: Tuple[Tuple[int, int], ...],
+        ):
+            if bonds_left == 0 and len(segment_connections) == segments:
+                result.append(current_bonds)
+                return
+
+            if bonds_left == 0 or len(cysteines_left) == 0:
+                return
+
+            current_cys, current_seg = cysteines_left[0]
+            others = cysteines_left[1:]
+
+            # This Cys isn't in a bond
+            go(others, bonds_left, segment_connections, current_bonds)
+
+            # This Cys is in a bond
+            for i, (next_cys, next_seg) in enumerate(others):
+                if next_seg != current_seg:
+                    next_seg_connections = segment_connections + (
+                        (current_seg, next_seg),
+                    )
+                else:
+                    next_seg_connections = segment_connections
+
                 go(
-                    next_beginning,
-                    segments_left=segments_left - 1,
-                    selection=selection + (i, next_beginning),
-                    min_mass=min_mass + (H2O - H2),
-                    base_mass=base_mass + (H2O - H2),
-                    max_mass=max_mass + (H2O - H2),
-                    free_cys_count=free_cys_count - 1,
-                    waiting_for_cys=True,
+                    others[:i] + others[i + 1 :],
+                    bonds_left - 1,
+                    next_seg_connections,
+                    current_bonds + ((current_cys, next_cys),),
                 )
 
-        # Add current peptide
-        new_free_cys = peptides[i].count("C") - waiting_for_cys
         go(
-            i + 1,
-            segments_left=segments_left,
-            selection=selection,
-            min_mass=min_mass + peptides[i].min_mass,
-            base_mass=base_mass + peptides[i].mid_mass,
-            max_mass=max_mass + peptides[i].max_mass,
-            free_cys_count=free_cys_count + max(new_free_cys, 0),
-            waiting_for_cys=new_free_cys < 0,
+            cysteines_left=cysteines,
+            bonds_left=bonds,
+            segment_connections=(),
+            current_bonds=(),
         )
 
-    for beginning in range(0, len(peptides)):
-        go(beginning, segments_left=max_segments - 1, selection=(beginning,))
-
-    return result
-
-
-def write_matched_precursors(
-    protein: str, kind: str, max_segments: int, error_ppm: float, code: Optional[str]
-):
-    data_path = f"../data/mgf/190318_{protein}_{kind}_50x_05.mgf"
-    seq_path = f"../data/fasta/{args.protein}.fasta"
-    output_path = (
-        "../out/precursor_matches/{}_{}_segments={}_error={}ppm{}.pickle".format(
-            protein, kind, max_segments, error_ppm, "" if code is None else f"_{code}"
-        )
-    )
-    protein = [r.sequence for r in fasta.read(seq_path)][0]
-    peptides = []
-    for b, e in trypsin(protein):
-        seq = protein[b:e]
-        met_ox = (MET_OXIDATION, sum(aa == "M" for aa in seq))
-        mods = {"M": met_ox} if "M" in seq else {}
-        peptides.append(Peptide(b, e, seq, modifications=mods))
-
-    print(f"Loading scans from {data_path}")
-    data = list(read_mgf(data_path))
-
-    print(f"Saving matched precursors to {output_path}")
-    with open(output_path, "wb") as f:
-        for scan in tqdm.tqdm(data):
-            precursors = match_precursors(
-                peptides,
-                scan=scan,
-                alkylation_mod=IAA_ALKYLATION,
-                max_segments=max_segments,
-                error_ppm=error_ppm,
-            )
-            for precursor in precursors:
-                pickle.dump(precursor, f)
-
-
-if __name__ == "__main__":
-    import argparse
-    import tqdm
-    from pyteomics import fasta
-
-    args = argparse.ArgumentParser(description="Save precursor matches for given scans")
-
-    # Add the arguments
-    args.add_argument(
-        "--protein",
-        type=str,
-        required=True,
-        help="protein code (usually three letters)",
-    )
-    args.add_argument(
-        "--kind",
-        type=str,
-        choices=["AT", "RAT"],
-        required=True,
-        help="measurement type (AT/RAT)",
-    )
-    args.add_argument(
-        "--error",
-        type=int,
-        required=True,
-        help="allowed measurement error in ppm",
-    )
-    args.add_argument(
-        "--segments",
-        type=int,
-        required=True,
-        help="upper bound of segment count in matched precursors",
-    )
-    args.add_argument(
-        "--code",
-        type=str,
-        default=None,
-        required=False,
-        help="code to append to the output file name",
-    )
-    args = args.parse_args()
-    write_matched_precursors(
-        protein=args.protein,
-        kind=args.kind,
-        max_segments=args.segments,
-        error_ppm=args.error,
-        code=args.code,
-    )
+        return result

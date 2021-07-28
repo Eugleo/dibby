@@ -1,5 +1,3 @@
-import protein
-import os
 import re
 
 from pyteomics import mgf, mass, mzid
@@ -61,24 +59,19 @@ class Scan:
         )
         self.intensities_padded = np.pad(self.fragments_intensity, 1, constant_values=0)
 
-    def to_dicts(self):
-        for mz, intenzity in zip(self.fragments_mz, self.fragments_intensity):
-            yield {
-                "scan": self.id,
-                "time": self.time,
-                "charge": self.prec_charge,
-                "peptide_mz": self.prec_mz,
-                "peptide_intensity": self.prec_intensity,
-                "peptide_mass_estimate": self.prec_mass,
-                "fragment_mz": mz,
-                "fragment_intensity": intenzity,
-            }
-
-    def contains(self, mz, tolerance=0.001):
-        check = (self.fragments_mz >= mz - tolerance) & (
-            self.fragments_mz <= mz + tolerance
+    def __str__(self):
+        return (
+            f"Scan(id={self.id}, nth={self.nth_in_order}, precursor={self.prec_mass})"
         )
-        return len(np.where(check)) > 0
+
+    def to_dict(self):
+        return {
+            "scan_id": self.id,
+            "scan_nth_in_order": self.nth_in_order,
+            "scan_time": self.time,
+            "scan_total_intensity": self.total_intensity,
+            "prec_charge": self.prec_charge,
+        }
 
     def score_match(
         self, peptide: Peptide, multiplier=binary_multiplier(tolerance_ppm=10)

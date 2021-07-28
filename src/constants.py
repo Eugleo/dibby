@@ -1,6 +1,4 @@
-from typing import List, Optional, Tuple
-
-from src.peptide import Mod
+from pyteomics.mass import calculate_mass
 
 LYS = "KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGILQINSRWWCNDGRTPGSRNLCNIPCSALLSSDITASVNCAKKIVSDGNGMNAWVAWRNRCKGTDVQAWIRGCRL"
 
@@ -13,36 +11,35 @@ OVA = "GSIGAASMEFCFDVFKELKVHHANENIFYCPIAIMSALAMVYLGAKDSTRTQINKVVRFDKLPGFGDSIEAQC
 LIP = "DDNLVGGMTLDLPSDAPPISLSSSTNSASDGGKVVAATTAQIQEFTKYAGIAATAYCRSVVPGNKWDCVQCQKWVPDGKIITTFTSLLSDTNGYVLRSDKQKTIYLVFRGTNSFRSAITDIVFNFSDYKPVKGAKVHAGFLSSYEQVVNDYFPVVQEQLTAHPTYKVIVTGHSLGGAQALLAGMDLYQREPRLSPKNLSIFTVGGPRVGNPTFAYYVESTGIPFQRTVHKRDIVPHVPPQSFGFLHPGVESWIKSGTSNVQICTSEIETKDCSNSIVPFTSILDHLSYFDINEGSCL"
 
 
-def combine_modifications(
-    modifications: List[List[Optional[Mod]]],
-    starting_mass: float,
-    target_mass: float,
-    error_ppm: float = 10,
-) -> List[List[Mod]]:
-    result = []
+H2O = calculate_mass(formula="H2O")
+H2 = calculate_mass(formula="H2")
+OH = calculate_mass(formula="OH")
+PROTON = calculate_mass(formula="H")
+NH3 = calculate_mass(formula="NH3")
+SULPHUR = calculate_mass(formula="S")
 
-    def go(i: int, current_mass: float, selection: Tuple[Mod, ...] = ()):
-        if i == len(modifications):
-            if within_bounds(current_mass, target_mass, error_ppm):
-                result.append(selection)
-        else:
-            for m in modifications[i]:
-                if m is None:  # None = no modification
-                    go(i + 1, current_mass, selection)
-                else:
-                    go(i + 1, current_mass + m.mass, selection + (m,))
-
-    go(0, current_mass=starting_mass)
-    return list(set(result))
-
-
-def within_bounds(reference_mass, measured_mass, error_ppm: float = 10):
-    return abs(reference_mass - measured_mass) <= err_margin(reference_mass, error_ppm)
-
-
-def err_margin(reference_mass, error_ppm: float = 10):
-    return (error_ppm / 1e6) * reference_mass
-
-
-def compute_error(reference_mass, measured_mass):
-    return 1e6 * abs(measured_mass - reference_mass) / reference_mass
+LYS_BONDS = [(5, 126), (29, 114), (63, 79), (75, 93)]
+LIP_BONDS = [(56, 295), (67, 70), (262, 271)]
+OVA_BONDS = [(72, 119)]
+BSA_BONDS = [
+    (b - 1, e - 1)
+    for b, e in [
+        (53, 62),
+        (75, 91),
+        (90, 101),
+        (123, 168),
+        (167, 176),
+        (199, 245),
+        (244, 252),
+        (264, 278),
+        (277, 288),
+        (315, 360),
+        (359, 368),
+        (391, 437),
+        (436, 447),
+        (460, 476),
+        (475, 486),
+        (513, 558),
+        (557, 566),
+    ]
+]

@@ -7,28 +7,6 @@ import pepfrag as pf
 import numpy as np
 
 
-def trypsin(protein):
-    last = 0
-    result = []
-    for i in range(len(protein) - 1):
-        if protein[i] in ["K", "R"] and protein[i + 1] != "P":
-            result.append((last, i + 1))
-            last = i + 1
-    result.append((last, len(protein)))
-    return result
-
-
-def pepsin(protein):
-    last = 0
-    result = []
-    for i in range(len(protein) - 1):
-        if protein[i] in ["F", "L", "W", "Y", "A", "E", "Q"]:
-            result.append((last, i + 1))
-            last = i + 1
-    result.append((last, len(protein)))
-    return result
-
-
 class Fragment:
     def __init__(self, mz, name=None, intensity=None):
         self.mz = mz
