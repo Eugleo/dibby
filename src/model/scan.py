@@ -1,9 +1,9 @@
 import re
 
-from pyteomics import mgf, mass, mzid
+from pyteomics import mgf, mzid
 import numpy as np
 
-from src.constants import PROTON
+from src.utilities.constants import PROTON
 
 
 class Scan:
@@ -54,9 +54,6 @@ class Scan:
 
 
 def read_mgf(path):
-    """
-    returns (scan ID, time, charge, mz, mass estimate)
-    """
     with mgf.read(path) as reader:
         for id, i in enumerate(reader):
             scan = int(re.match(".* scan=([0-9]+)", i["params"]["title"])[1])

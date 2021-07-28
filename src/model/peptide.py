@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, List, Iterator
 from pyteomics.mass import calculate_mass
 
-from src.modification import Modification
+from src.model.modification import Modification
 
 
 def trypsin(protein):

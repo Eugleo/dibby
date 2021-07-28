@@ -1,10 +1,9 @@
 import dataclasses
 from typing import List, Tuple
 
-from src.scan import Scan
-from src.peptide import Peptide
-from src.modification import Modification, MET_OXIDATION
-from src.variant import Variant
+from src.model.peptide import Peptide
+from src.model.modification import Modification, MET_OXIDATION
+from src.model.variant import Variant
 
 
 @dataclasses.dataclass(frozen=True)

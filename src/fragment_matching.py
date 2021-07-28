@@ -4,7 +4,7 @@ from typing import Dict, Tuple, List, Any
 
 import tqdm
 
-from src.constants import (
+from src.utilities.constants import (
     PROTON,
     H2,
     SULPHUR,
@@ -12,9 +12,9 @@ from src.constants import (
     OH,
     NH3,
 )
-from src.utils import load_precursor_matches, cleave_protein
-from src.error import err_margin, compute_error
-from src.modification import (
+from src.utilities.dataloading import load_precursor_matches, cleave_protein
+from src.utilities.error import err_margin, compute_error
+from src.model.modification import (
     combine_modifications,
     Modification,
     SEVERED_CYS_BOND_BOTH,
@@ -23,17 +23,17 @@ from src.modification import (
     SEVERED_CYS_BOND_3,
     SEVERED_CYS_BOND_4,
 )
-from src.fragment import Fragment
-from src.peptide import (
+from src.model.fragment import Fragment
+from src.model.peptide import (
     Peptide,
 )
-from src.precursor import Precursor
+from src.model.precursor import Precursor
 from typing import NamedTuple
 
-from src.scan import Scan
+from src.model.scan import Scan
 import sys
 
-from src.variant import Variant
+from src.model.variant import Variant
 
 sys.setrecursionlimit(10000)
 

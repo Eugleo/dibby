@@ -3,8 +3,8 @@ from typing import List, Optional, Tuple
 
 from pyteomics.mass import calculate_mass
 
-from src.constants import H2, SULPHUR
-from src.error import within_bounds
+from src.utilities.constants import H2, SULPHUR
+from src.utilities.error import within_bounds
 
 
 # TODO: Shouldn't they be more positive? We're missing the H2 by default, no?

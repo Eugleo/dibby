@@ -1,7 +1,7 @@
 from typing import List, Dict, Tuple, Optional
 
-from src.peptide import Peptide, Residue
-from src.modification import Modification
+from src.model.peptide import Peptide, Residue
+from src.model.modification import Modification
 
 
 class Variant:

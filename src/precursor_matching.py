@@ -1,14 +1,14 @@
 import pickle
 from typing import Tuple, List, Optional
 
-from scan import read_mgf, Scan
-from src.constants import (
+from src.model.scan import read_mgf, Scan
+from src.utilities.constants import (
     H2O,
     PROTON,
 )
-from src.utils import cleave_protein
-from src.error import err_margin, compute_error
-from src.modification import (
+from src.utilities.dataloading import cleave_protein
+from src.utilities.error import err_margin, compute_error
+from src.model.modification import (
     combine_modifications,
     Modification,
     IAA_ALKYLATION,
@@ -16,10 +16,10 @@ from src.modification import (
     CYS_BOND,
 )
 
-from src.peptide import (
+from src.model.peptide import (
     Peptide,
 )
-from src.precursor import Precursor
+from src.model.precursor import Precursor
 
 
 def _precursors_matching_scan(

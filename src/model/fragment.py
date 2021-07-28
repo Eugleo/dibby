@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from src.modification import Modification
+from src.model.modification import Modification
 
 
 @dataclass(frozen=True)

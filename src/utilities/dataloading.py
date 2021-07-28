@@ -2,8 +2,8 @@ import pickle
 
 from pyteomics import fasta
 
-from src.modification import MET_OXIDATION
-from src.peptide import trypsin, Peptide
+from src.model.modification import MET_OXIDATION
+from src.model.peptide import trypsin, Peptide
 
 
 def load_precursor_matches(protein, kind, segments, error, code):
