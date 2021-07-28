@@ -4,7 +4,6 @@ from typing import Dict, Tuple, Optional, List, Union
 
 import tqdm
 from pyteomics import mass
-from common import LYS, BSA
 
 from precursor import Mod, Peptide, Residue, err_margin, compute_error, within_bounds
 
@@ -633,7 +632,7 @@ if __name__ == "__main__":
     protein = [r.sequence for r in fasta.read(seq_path)][0]
     peptides = []
     for b, e in trypsin(protein):
-        seq = BSA[b:e]
+        seq = protein[b:e]
         met_ox = (Mod("Met Oxidation", 15.9949), sum(aa == "M" for aa in seq))
         mods = {"M": met_ox} if "M" in seq else {}
         peptides.append(Peptide(b, e, seq, modifications=mods))
@@ -663,7 +662,9 @@ if __name__ == "__main__":
                         coef = measurement.charge * PROTON + precursor["mass"]
                         max_charge = min(
                             measurement.charge,
-                            math.trunc(coef / (frag - err_margin(frag, error_ppm=15))),
+                            math.trunc(
+                                coef / (frag - err_margin(frag, error_ppm=args.error))
+                            ),
                         )
 
                         for ch in range(1, max_charge + 1):
@@ -682,12 +683,13 @@ if __name__ == "__main__":
                             )
                     targets = sorted(targets, key=lambda t: t[1])
 
-                    for multiprotein, bonds in gen_multip(peptides, precursor):
+                    variants = gen_multip(peptides, precursor)
+                    for multiprotein, bonds in variants:
                         matches = fragments(
                             [t for _, t in targets],
                             multiprotein,
-                            allowed_breaks=2,
-                            ppm_error=15,
+                            allowed_breaks=args.breaks,
+                            ppm_error=args.error,
                         )
 
                         multip_str = str(multiprotein)
@@ -705,6 +707,7 @@ if __name__ == "__main__":
                             to_print = {
                                 "measurement": measurement,
                                 "precursor": precursor,  # TODO REMOVE WHEN RUNNING=3
+                                "variants": len(variants),
                                 "multipeptide": multiprotein,
                                 "bonds": bonds,
                                 "match": m,
