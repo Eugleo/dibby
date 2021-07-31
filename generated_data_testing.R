@@ -102,7 +102,6 @@ df <- read_delim(
     -scan_nth_in_order, -scan_time, -scan_total_intensity,
     -frag_intensity, -frag_intensity_ratio, -target_mass,
   )
-
 frags <-
   df %>%
   full_join(ideal, by = c("scan_id", "target_mz"), suffix = c("", "_ideal")) %>%
@@ -159,6 +158,6 @@ frags %>%
 
 # FN
 frags %>%
-  filter(prec_cys_bond_count_ideal == 0) %>%
+  # filter(prec_cys_bond_count_ideal == 0) %>%
   filter(is.na(prec_sequence)) %>%
   View()

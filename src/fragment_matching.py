@@ -68,6 +68,7 @@ def first(xs, pred):
     return next(filter(pred, xs), None)
 
 
+# TODO: Neumím matchovat věci z variant, kde jdou ty segmenty hned po sobě, a to jen u segmentu vpravo
 def _fragments_matching_targets(
     targets: List[Target],
     variant: Variant,
