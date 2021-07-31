@@ -1,7 +1,7 @@
 from typing import List, Dict, Tuple, Optional
 
 from src.model.peptide import Peptide, Residue
-from src.model.modification import Modification
+from src.model.modification import Modification, IAA_ALKYLATION
 
 
 class Variant:
@@ -35,11 +35,7 @@ class Variant:
             for i in s:
                 res = s[i]
                 if res.name == "C" and self._disulfide_bond.get(i, None) is None:
-                    self._residues.append(
-                        Residue(
-                            "C", [Modification("Cys alkylation", self._alkylation_mass)]
-                        )
-                    )
+                    self._residues.append(Residue("C", [IAA_ALKYLATION]))
                 else:
                     self._residues.append(res)
 

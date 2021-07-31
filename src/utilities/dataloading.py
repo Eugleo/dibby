@@ -6,7 +6,7 @@ from src.model.modification import MET_OXIDATION
 from src.model.peptide import trypsin, Peptide
 
 
-def load_precursor_matches(protein, kind, segments, error, code):
+def load_precursor_matches(protein, kind, segments, error, code, debug=False):
     data_path = (
         "../out/precursor_matches/{}_{}_segments={}_error={}ppm{}.pickle".format(
             protein,
@@ -17,17 +17,19 @@ def load_precursor_matches(protein, kind, segments, error, code):
         )
     )
 
+    print(f"Loading precursors from {data_path}...")
+
     with open(data_path, "rb") as f:
-        precursor_matches = []
-        try:
-            while True:
-                precursor_matches.append(pickle.load(f))
-        finally:
-            return precursor_matches
+        return pickle.load(f)
 
 
 def load_fragment_matches(
-    protein: str, kind: str, segments: int, breaks: int, error: float, code: str
+    protein: str,
+    kind: str,
+    segments: int,
+    breaks: int,
+    error: float,
+    code: str,
 ):
     base = "../out/fragment_matches/{}_{}_segments={}_breaks={}_error={}ppm{}.pickle"
     data_path = base.format(
@@ -39,13 +41,10 @@ def load_fragment_matches(
         "" if code is None else f"_{code}",
     )
 
+    print(f"Loading fragments from {data_path}")
+
     with open(data_path, "rb") as f:
-        fragment_matches = []
-        try:
-            while True:
-                fragment_matches.append(pickle.load(f))
-        finally:
-            return fragment_matches
+        return pickle.load(f)
 
 
 def cleave_protein(protein: str):

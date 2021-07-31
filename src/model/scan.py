@@ -18,6 +18,7 @@ class Scan:
         prec_mass,
         fragments_mz,
         fragments_intensity,
+        threshold=0.01,
     ):
         self.nth_in_order = nth_in_order
         self.id = id
@@ -26,17 +27,17 @@ class Scan:
         self.prec_mz = prec_mz
         self.prec_intensity = prec_intensity
         self.prec_mass = prec_mass
-        nonzero = fragments_intensity >= 0.01 * np.max(fragments_intensity)
-        indices = np.argsort(fragments_mz[nonzero])
 
-        self.fragments_mz = fragments_mz[nonzero][indices]
-        self.fragments_intensity = fragments_intensity[nonzero][indices]
-        self.total_intensity = np.sum(self.fragments_intensity)
-
-        self.masses_padded = np.pad(
-            self.fragments_mz, 1, constant_values=(-np.inf, np.inf)
-        )
-        self.intensities_padded = np.pad(self.fragments_intensity, 1, constant_values=0)
+        if len(fragments_mz) > 0:
+            nonzero = fragments_intensity >= (threshold * np.max(fragments_intensity))
+            indices = np.argsort(fragments_mz[nonzero])
+            self.fragments_mz = fragments_mz[nonzero][indices]
+            self.fragments_intensity = fragments_intensity[nonzero][indices]
+            self.total_intensity = np.sum(self.fragments_intensity)
+        else:
+            self.fragments_mz = np.array([])
+            self.fragments_intensity = np.array([])
+            self.total_intensity = 0.001
 
     def __str__(self):
         return (

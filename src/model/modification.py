@@ -51,6 +51,10 @@ def SEVERED_CYS_BOND_1(residue: int):
     return Modification(f"Cys {residue}: R–SH", 0)
 
 
+SEVERED_CYS_BOND_MIN_MASS = -(SULPHUR + H2)
+SEVERED_CYS_BOND_MAX_MASS = SULPHUR
+
+
 def SEVERED_CYS_BOND_2(residue: int):
     return Modification(f"Cys {residue}: R–()", -(SULPHUR + H2))
 

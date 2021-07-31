@@ -1,5 +1,5 @@
 import pickle
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 
 from src.model.scan import read_mgf, Scan
 from src.utilities.constants import (
@@ -28,6 +28,7 @@ def _precursors_matching_scan(
     max_segments: int,
     alkylation_mod: Modification = IAA_ALKYLATION,
     error_ppm: float = 10,
+    debug=None,
 ) -> List:
     target_mass = scan.prec_mass
     result = []
@@ -50,6 +51,26 @@ def _precursors_matching_scan(
             + (CYS_BOND.mass * max_other_bonds)
         )
         lower_bound = min_realistic_mass - err_margin(min_realistic_mass, error_ppm)
+
+        if debug is not None:
+            ranges = list(zip(selection[::2], (selection + (i,))[1::2]))
+            max_realistic_mass = max_mass + alkylation_mod.mass * free_cys_count
+            upper_bound = max_realistic_mass + err_margin(max_realistic_mass, error_ppm)
+            segments = ("".join(p.sequence for p in tryptides[b:e]) for b, e in ranges)
+            sequence = "+".join(segments)
+
+            if debug in sequence:
+                print(sequence)
+                print(
+                    "min=",
+                    lower_bound,
+                    "max=",
+                    upper_bound,
+                    "current=",
+                    base_mass,
+                    "target=",
+                    target_mass,
+                )
 
         if not waiting_for_cys:
             max_realistic_mass = max_mass + alkylation_mod.mass * free_cys_count
@@ -164,7 +185,7 @@ def _precursors_matching_scan(
     return result
 
 
-def write_matched_precursors(
+def match_precursors(
     protein: str, kind: str, max_segments: int, error_ppm: float, code: Optional[str]
 ):
     data_path = f"../data/mgf/190318_{protein}_{kind}_50x_05.mgf"
@@ -174,22 +195,43 @@ def write_matched_precursors(
         )
     )
 
-    print(f"Loading scans from {data_path}")
-    data = list(read_mgf(data_path))
+    print(f"Loading scans from {data_path}...")
+    scans = list(read_mgf(data_path))
     cleaved_tryptides = cleave_protein(protein)
 
     print(f"Saving matched precursors to {output_path}")
+
+    write_matched_precursors(
+        cleaved_tryptides, scans, output_path, max_segments, error_ppm
+    )
+
+
+def write_matched_precursors(
+    cleaved_tryptides: List[Peptide],
+    scans: List[Scan],
+    output_path: str,
+    max_segments: int,
+    error_ppm: float,
+) -> List[Dict]:
+    result = []
+    print(f"Looking for matches...")
+    for scan in scans:
+        precursors = _precursors_matching_scan(
+            tryptides=cleaved_tryptides,
+            scan=scan,
+            alkylation_mod=IAA_ALKYLATION,
+            max_segments=max_segments,
+            error_ppm=error_ppm,
+        )
+        for precursor in precursors:
+            match = {"scan": scan, "precursor": precursor}
+            result.append(match)
+
+    print(f"Saving the matches to {output_path}")
     with open(output_path, "wb") as f:
-        for scan in tqdm.tqdm(data):
-            precursors = _precursors_matching_scan(
-                tryptides=cleaved_tryptides,
-                scan=scan,
-                alkylation_mod=IAA_ALKYLATION,
-                max_segments=max_segments,
-                error_ppm=error_ppm,
-            )
-            for precursor in precursors:
-                pickle.dump({"scan": scan, "precursor": precursor}, f)
+        pickle.dump(result, f)
+
+    return result
 
 
 if __name__ == "__main__":
@@ -232,7 +274,7 @@ if __name__ == "__main__":
         help="code to append to the output file name",
     )
     args = args.parse_args()
-    write_matched_precursors(
+    match_precursors(
         protein=args.protein,
         kind=args.kind,
         max_segments=args.segments,

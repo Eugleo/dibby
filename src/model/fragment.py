@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 
 from src.model.modification import Modification
 
@@ -20,7 +20,7 @@ class Fragment:
     charge: int
     break_count: int
     error_ppm: float
-    modifications: List[Modification]
+    modifications: Iterable[Modification]
     connected_bonds: List[Tuple[int, int]]
     disconnected_cys: List[int]
 

@@ -18,6 +18,18 @@ class Precursor:
     modifications: List[Modification]
     error_ppm: float
 
+    def __hash__(self):
+        return (
+            self.mass,
+            self.mz,
+            tuple(self.residue_ranges),
+            tuple(self.segments),
+            self.cys_bond_count,
+            self.alkylation_count,
+            self.error_ppm,
+            tuple(self.modifications),
+        ).__hash__()
+
     def to_dict(self):
         mcs = [(e - b) - 1 for b, e in self.segments]
         return {

@@ -22,6 +22,8 @@ from src.model.modification import (
     SEVERED_CYS_BOND_2,
     SEVERED_CYS_BOND_3,
     SEVERED_CYS_BOND_4,
+    SEVERED_CYS_BOND_MIN_MASS,
+    SEVERED_CYS_BOND_MAX_MASS,
 )
 from src.model.fragment import Fragment
 from src.model.peptide import (
@@ -62,8 +64,15 @@ Target = NamedTuple(
 )
 
 
+def first(xs, pred):
+    return next(filter(pred, xs), None)
+
+
 def _fragments_matching_targets(
-    targets: List[Target], variant: Variant, allowed_breaks: int, error_ppm: float
+    targets: List[Target],
+    variant: Variant,
+    allowed_breaks: int,
+    error_ppm: float,
 ) -> List[Fragment]:
     target_masses = [t.mass for t in targets]
     result = []
@@ -91,73 +100,62 @@ def _fragments_matching_targets(
             # We've ran out of targets to fulfil, we're done
             return
 
-        # TODO: Add support for negative-mass modifications
-        # TODO: Tighten the lower bound
-        # - add must-have modifications
-        # - properly count Cys modifications
-        min_possible_mass = (
-            current_mass
-            + B_ION_MOD
-            + (len(disconnected_cys)) * (-H2 - SULPHUR)
-            - neutral_losses_count * H2O
-        )
-        lower_bound = min_possible_mass - err_margin(min_possible_mass, error_ppm)
-        if lower_bound > targets[target_i].mass:
-            # Jump to the next target, current one is beyond reach (too low)
-            continue_run(
-                i,
-                target_i=target_i + 1,
-                min_end=min_end,
-                max_end=max_end,
-                current_mass=current_mass,
-                breaks_left=breaks_left,
-                pivots=pivots,
-                selection=selection,
-                disconnected_cys=disconnected_cys,
-                connected_cys=connected_cys,
-                neutral_losses_count=neutral_losses_count,
-                segment_cuts=segment_cuts,
-                fragment_start=fragment_start,
-                modded_residues=modded_residues,
-            )
-
-            return
-
         # We can end the run
         if min_end <= i <= max_end:
             segment = variant.segment(i)
             # We are ending the run even though we don't need to
             premature_end = i < max_end
-
-            new_segment_cuts = segment_cuts.copy()
-            new_cuts = []
-            for cb, ce in segment_cuts[segment]:
-                if ce == max_end:  # The 'current' cut we're now bisecting
-                    current_beg = selection[-1]
-                    if cb < current_beg:
-                        new_cuts.append((cb, current_beg))
-                    if i < ce:
-                        new_cuts.append((i, ce))
-                else:
-                    new_cuts.append((cb, ce))
-            new_segment_cuts[segment] = tuple(new_cuts)
-
             open_end = i < variant.segment_end(segment)
 
             if not premature_end or breaks_left > 0:
+                new_current_mass = current_mass + (B_ION_MOD if open_end else OH)
+                new_neutral_loss_count = neutral_losses_count + open_end
+                # TODO: Add support for negative-mass modifications
+                # TODO: Tighten the lower bound
+                # - add must-have modifications
+                # - properly count Cys modifications
+                min_mass = (
+                    new_current_mass
+                    + (len(disconnected_cys)) * SEVERED_CYS_BOND_MIN_MASS
+                    + new_neutral_loss_count * H2O_NEUTRAL_LOSS.mass
+                )
+                lower_bound = min_mass - err_margin(min_mass, error_ppm)
+
+                next_target = first(
+                    range(target_i, len(target_masses)),
+                    lambda ti: target_masses[ti] > lower_bound,
+                )
+
+                # Our mass is too high, all the targets are below us
+                if next_target is None:
+                    return
+
+                new_segment_cuts = segment_cuts.copy()
+                new_cuts = []
+                for cb, ce in segment_cuts[segment]:
+                    if ce == max_end:  # The 'current' cut we're now bisecting
+                        current_beg = selection[-1]
+                        if cb < current_beg:
+                            new_cuts.append((cb, current_beg))
+                        if i < ce:
+                            new_cuts.append((i, ce))
+                    else:
+                        new_cuts.append((cb, ce))
+                new_segment_cuts[segment] = tuple(new_cuts)
+
                 # End the run
                 start_new_run(
                     segment_cuts=new_segment_cuts,
                     pivots=pivots,
                     breaks_left=breaks_left - premature_end,
                     fragment_start=fragment_start,
-                    target_i=target_i,
-                    current_mass=current_mass + (B_ION_MOD if open_end else OH),
+                    target_i=next_target,
+                    current_mass=new_current_mass,
                     selection=selection + (i,),
                     modded_residues=modded_residues,
                     disconnected_cys=disconnected_cys,
                     connected_cys=connected_cys,
-                    neutral_losses_count=neutral_losses_count + open_end,
+                    neutral_losses_count=new_neutral_loss_count,
                 )
 
             if not premature_end:
@@ -177,8 +175,6 @@ def _fragments_matching_targets(
         connected = in_bond and j in connected_cys
         disconnected = in_bond and j in disconnected_cys
         bond_is_new = in_bond and not (j in connected_cys or j in disconnected_cys)
-
-        assert not (j in connected_cys and j in disconnected_cys)
 
         if bond_is_new:
             # We create two branches: one where the bond is kept...
@@ -301,7 +297,6 @@ def _fragments_matching_targets(
                     )
 
             residue_ranges = list(zip(selection[::2], selection[1::2]))
-
             sequence = []
             for rb, re in residue_ranges:
                 s = ""
@@ -310,11 +305,13 @@ def _fragments_matching_targets(
                 sequence.append(s)
             sequence = "+".join(sequence)
 
-            # TODO: Make the 190 threshold selectively lower
+            max_mass = current_mass + len(disconnected_cys) * SEVERED_CYS_BOND_MAX_MASS
+            upper_bound = max_mass + err_margin(max_mass, error_ppm)
+
             valid_targets = [
                 i
-                for i, t in enumerate(target_masses)
-                if target_masses[target_i] <= t <= target_masses[target_i] + 250
+                for i in range(target_i, len(target_masses))
+                if target_masses[i] <= upper_bound
             ]
 
             for target_i in valid_targets:
@@ -325,8 +322,13 @@ def _fragments_matching_targets(
                     error_ppm=error_ppm,
                 )
                 target = targets[target_i]
-                for modifications in combinations:
-                    total_mass = current_mass + sum(m.mass for m in modifications)
+
+                mod_combination_set = set(
+                    tuple(sorted(c, key=lambda m: m.mass)) for c in combinations
+                )
+
+                for mod_combination in mod_combination_set:
+                    total_mass = current_mass + sum(m.mass for m in mod_combination)
                     result.append(
                         Fragment(
                             id=target.id,
@@ -343,7 +345,7 @@ def _fragments_matching_targets(
                             error_ppm=compute_error(
                                 total_mass, target_masses[target_i]
                             ),
-                            modifications=modifications,
+                            modifications=mod_combination,
                             connected_bonds=[
                                 (i, variant.bond_partner(i))
                                 for i in connected_cys
@@ -410,61 +412,75 @@ def _fragments_matching_targets(
 
 
 def write_matched_fragments(
-    precursor_matches: List[Precursor],
+    precursor_matches: List[Dict],
     tryptides: List[Peptide],
     output_path: str,
     max_allowed_breaks: int,
     error_ppm: float,
 ):
     print(f"Writing the matched fragments to {output_path}")
-    with open(output_path, "wb") as of:
-        for precursor_match in tqdm.tqdm(precursor_matches):
-            scan: Scan = precursor_match["scan"]
-            precursor: Precursor = precursor_match["precursor"]
-            total_intensity = sum(scan.fragments_intensity)
+    fragment_matches = []
 
-            targets = []
-            for frag_id, (frag_mz, frag_intensity) in enumerate(
-                zip(scan.fragments_mz, scan.fragments_intensity)
-            ):
-                coef = scan.prec_charge * PROTON + precursor.mass
-                max_charge = min(
-                    scan.prec_charge,
-                    math.trunc(
-                        coef / (frag_mz - err_margin(frag_mz, error_ppm=error_ppm))
-                    ),
-                )
+    for precursor_match in tqdm.tqdm(precursor_matches):
+        scan: Scan = precursor_match["scan"]
+        precursor: Precursor = precursor_match["precursor"]
+        total_intensity = sum(scan.fragments_intensity)
 
-                for ch in range(1, max_charge + 1):
-                    targets.append(
-                        Target(
-                            frag_id,
-                            frag_mz * ch - PROTON * ch,
-                            frag_mz,
-                            frag_intensity,
-                            ch,
-                            frag_intensity / total_intensity,
-                        )
+        # ADD FOR BSA
+        # if precursor.mass > 5500 or precursor.to_dict()["prec_max_mc_count"] > 3:
+        #    continue
+
+        targets = []
+        for frag_id, (frag_mz, frag_intensity) in enumerate(
+            zip(scan.fragments_mz, scan.fragments_intensity)
+        ):
+            coef = scan.prec_charge * PROTON + precursor.mass
+            max_charge = min(
+                scan.prec_charge,
+                math.trunc(coef / (frag_mz - err_margin(frag_mz, error_ppm=error_ppm))),
+                # 3,  # ADD FOR BSA
+            )
+
+            for ch in range(1, max_charge + 1):
+                targets.append(
+                    Target(
+                        frag_id,
+                        frag_mz * ch - PROTON * ch,
+                        frag_mz,
+                        frag_intensity,
+                        ch,
+                        frag_intensity / total_intensity,
                     )
-
-            variants = precursor.variants(tryptides)
-            for variant in variants:
-                fragments = _fragments_matching_targets(
-                    targets,
-                    variant,
-                    allowed_breaks=max_allowed_breaks,
-                    error_ppm=error_ppm,
                 )
 
-                base_info: Dict[str, Any] = {
-                    "scan": scan,
-                    "precursor": precursor,
-                    "variant": variant,
-                    "variant_count": len(variants),
-                }
+        targets = list(sorted(targets, key=lambda t: t.mass))
 
-                for f in fragments:
-                    pickle.dump(base_info | {"fragment": f}, of)
+        variants = precursor.variants(tryptides)
+        for variant in variants:
+            fragments = _fragments_matching_targets(
+                targets,
+                variant,
+                allowed_breaks=max_allowed_breaks,
+                error_ppm=error_ppm,
+            )
+
+            base_info: Dict[str, Any] = {
+                "scan": scan,
+                "precursor": precursor,
+                "variant": variant,
+                "variant_count": len(variants),
+            }
+
+            if not fragments:
+                fragment_matches.append(base_info | {"fragment": None})
+
+            for f in fragments:
+                fragment_matches.append(base_info | {"fragment": f})
+
+    with open(output_path, "wb") as f:
+        pickle.dump(fragment_matches, f)
+
+    return fragment_matches
 
 
 if __name__ == "__main__":
@@ -495,6 +511,12 @@ if __name__ == "__main__":
         help="allowed measurement error in ppm",
     )
     args.add_argument(
+        "--perror",
+        type=int,
+        required=True,
+        help="allowed precursor measurement error in ppm",
+    )
+    args.add_argument(
         "--breaks",
         type=int,
         required=True,
@@ -521,7 +543,7 @@ if __name__ == "__main__":
     )
     write_matched_fragments(
         precursor_matches=load_precursor_matches(
-            args.protein, args.kind, args.segments, args.error, args.code
+            args.protein, args.kind, args.segments, args.perror, args.code
         ),
         tryptides=cleave_protein(args.protein),
         output_path=output_template.format(
