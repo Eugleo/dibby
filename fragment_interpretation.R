@@ -3,7 +3,7 @@ library(tidyverse)
 
 df <-
   read_delim(
-    "out/csv/fragment_matches_TEST_OVA_AT_segments=3_breaks=2_error=5ppm.csv",
+    "out/csv/fragment_matches_LYS_AT_segments=3_breaks=2_error=10ppm.csv",
     delim = ";"
   )
 

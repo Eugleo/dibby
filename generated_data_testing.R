@@ -66,13 +66,13 @@ prec %>%
     !prec_identical,
     prec_max_mc_count < 5,
     is.na(prec_error) | prec_error < 5,
-    # str_remove(prec_sequence_ideal, "\\+") != prec_break_removed,
+    str_remove(prec_sequence_ideal, "\\+") != prec_break_removed,
   )
   # distinct(prec_break_removed, prec_sequence_ideal, .keep_all = TRUE)
 
 # FN
-df %>%
-  filter(big_error, is.na(prec_error))
+prec %>%
+  filter(is.na(prec_error))
 
 # Scany s 0 TP
 df %>%
