@@ -7,7 +7,6 @@ import tqdm
 from src.utilities.constants import (
     PROTON,
     H2,
-    SULPHUR,
     H2O,
     OH,
     NH3,
@@ -91,6 +90,7 @@ def _fragments_matching_targets(
         connected_cys: Tuple[int, ...],
         neutral_losses_count: int,
         segment_cuts: SegmentCuts,
+        current_segment: int,
         fragment_start: int,
         modded_residues: Dict[str, int],
     ):
@@ -103,11 +103,9 @@ def _fragments_matching_targets(
 
         # We can end the run
         if min_end <= i <= max_end:
-            segment = variant.segment(i)
-            segment = segment if segment is not None else variant.segment(i - 1)
             # We are ending the run even though we don't need to
             premature_end = i < max_end
-            open_end = i < variant.segment_end(segment)
+            open_end = i < variant.segment_end(current_segment)
 
             if not premature_end or breaks_left > 0:
                 new_current_mass = current_mass + (B_ION_MOD if open_end else OH)
@@ -134,7 +132,7 @@ def _fragments_matching_targets(
 
                 new_segment_cuts = segment_cuts.copy()
                 new_cuts = []
-                for cb, ce in segment_cuts[segment]:
+                for cb, ce in segment_cuts[current_segment]:
                     if ce == max_end:  # The 'current' cut we're now bisecting
                         current_beg = selection[-1]
                         if cb < current_beg:
@@ -143,7 +141,7 @@ def _fragments_matching_targets(
                             new_cuts.append((i, ce))
                     else:
                         new_cuts.append((cb, ce))
-                new_segment_cuts[segment] = tuple(new_cuts)
+                new_segment_cuts[current_segment] = tuple(new_cuts)
 
                 # End the run
                 start_new_run(
@@ -195,6 +193,7 @@ def _fragments_matching_targets(
                     connected_cys=connected_cys + (i,),
                     neutral_losses_count=neutral_losses_count,
                     segment_cuts=segment_cuts,
+                    current_segment=current_segment,
                     fragment_start=fragment_start,
                     modded_residues=modded_residues,
                 )
@@ -214,6 +213,7 @@ def _fragments_matching_targets(
                     connected_cys=connected_cys,
                     neutral_losses_count=neutral_losses_count,
                     segment_cuts=segment_cuts,
+                    current_segment=current_segment,
                     fragment_start=fragment_start,
                     modded_residues=modded_residues,
                 )
@@ -235,6 +235,7 @@ def _fragments_matching_targets(
                 connected_cys=(connected_cys + (i,)) if connected else connected_cys,
                 neutral_losses_count=neutral_losses_count,
                 segment_cuts=segment_cuts,
+                current_segment=current_segment,
                 fragment_start=fragment_start,
                 modded_residues=new_modded_residues,
             )
@@ -397,6 +398,7 @@ def _fragments_matching_targets(
                     connected_cys=connected_cys,
                     neutral_losses_count=neutral_losses_count + is_open,
                     segment_cuts=segment_cuts,
+                    current_segment=segment,
                     fragment_start=fragment_start,
                     modded_residues=modded_residues,
                 )
