@@ -104,6 +104,7 @@ def _fragments_matching_targets(
         # We can end the run
         if min_end <= i <= max_end:
             segment = variant.segment(i)
+            segment = segment if segment is not None else variant.segment(i - 1)
             # We are ending the run even though we don't need to
             premature_end = i < max_end
             open_end = i < variant.segment_end(segment)
@@ -364,6 +365,7 @@ def _fragments_matching_targets(
         applicable_cuts = [
             (cb, ce) for cb, ce in segment_cuts[segment] if cb <= pivot < ce
         ]
+
         if not applicable_cuts:
             return
         cut_beginning, cut_end = applicable_cuts[0]

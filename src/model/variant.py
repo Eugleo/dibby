@@ -69,7 +69,7 @@ class Variant:
 
     def segment(self, residue: int) -> int:
         for i, s in enumerate(self._segments):
-            if s.beginning <= residue <= s.end:
+            if s.beginning <= residue < s.end:
                 return i
 
     def segment_bounds(self, segment: int) -> Tuple[int, int]:
