@@ -12,7 +12,7 @@ from src.utilities.constants import (
     NH3,
 )
 from src.utilities.dataloading import load_precursor_matches, cleave_protein
-from src.utilities.error import err_margin, compute_error
+from src.utilities.error import err_margin, compute_error, within_bounds
 from src.model.modification import (
     combine_modifications,
     Modification,
@@ -104,6 +104,7 @@ def _fragments_matching_targets(
         # We can end the run
         if min_end <= i <= max_end:
             # We are ending the run even though we don't need to
+
             premature_end = i < max_end
             open_end = i < variant.segment_end(current_segment)
 
@@ -260,18 +261,21 @@ def _fragments_matching_targets(
         if len(pivots) == 0:
             potential_mods = []
 
+            maximal_mod_addon = 0
             for res, seen in modded_residues.items():
                 peptide_mod, must_have = variant.modification_on(res)
 
                 minimum_mods = max(must_have - (variant.count(res) - seen), 0)
 
                 for _ in range(minimum_mods):
+                    maximal_mod_addon += peptide_mod.mass
                     potential_mods.append([peptide_mod])
 
                 # How many can I have
                 maximum_mods = min(must_have, seen)
                 # Optional mods
                 for _ in range(maximum_mods - minimum_mods):
+                    maximal_mod_addon += peptide_mod.mass
                     potential_mods.append([None, peptide_mod])
 
             for _ in range(neutral_losses_count):
@@ -308,7 +312,11 @@ def _fragments_matching_targets(
                 sequence.append(s)
             sequence = "+".join(sequence)
 
-            max_mass = current_mass + len(disconnected_cys) * SEVERED_CYS_BOND_MAX_MASS
+            max_mass = (
+                current_mass
+                + len(disconnected_cys) * SEVERED_CYS_BOND_MAX_MASS
+                + maximal_mod_addon
+            )
             upper_bound = max_mass + err_margin(max_mass, error_ppm)
 
             valid_targets = [
@@ -476,10 +484,16 @@ def write_matched_fragments(
                 "variant_count": len(variants),
             }
 
-            if not fragments:
+            ok_fragments = [
+                f
+                for f in fragments
+                if within_bounds(f.mz, f.target_mz, error_ppm=error_ppm)
+            ]
+
+            if not ok_fragments:
                 fragment_matches.append(base_info | {"fragment": None})
 
-            for f in fragments:
+            for f in ok_fragments:
                 fragment_matches.append(base_info | {"fragment": f})
 
     with open(output_path, "wb") as f:

@@ -7,7 +7,7 @@ from src.utilities.constants import (
     PROTON,
 )
 from src.utilities.dataloading import cleave_protein
-from src.utilities.error import err_margin, compute_error
+from src.utilities.error import err_margin, compute_error, within_bounds
 from src.model.modification import (
     combine_modifications,
     Modification,
@@ -224,8 +224,10 @@ def write_matched_precursors(
             error_ppm=error_ppm,
         )
         for precursor in precursors:
-            match = {"scan": scan, "precursor": precursor}
-            result.append(match)
+            # Check the error again, because it has been measured relative to mass and not mz
+            if within_bounds(precursor.mz, scan.prec_mz, error_ppm=error_ppm):
+                match = {"scan": scan, "precursor": precursor}
+                result.append(match)
 
     print(f"Saving the matches to {output_path}")
     with open(output_path, "wb") as f:
