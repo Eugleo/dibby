@@ -3,47 +3,34 @@ library(tidyverse)
 
 df <-
   read_delim(
-    "out/csv/fragment_matches_LYS_AT_segments=3_breaks=2_error=10ppm.csv",
+    "out/csv/fragment_matches_OVA_AT_segments=3_breaks=2_error=5ppm.csv",
     delim = ";"
   )
 
-df %>% ggplot(aes(var_is_good)) + geom_bar() + scale_y_log10()
-
 OVA_BONDS <- c("(72, 119)")
-LYS_BONDS <- c("(5, 126)", "(29, 114)", "(75, 93)", "(63, 79)")
 BSA_BONDS <-
-  c('(52, 61)',
-    '(74, 90)',
-    '(89, 100)',
-    '(122, 167)',
-    '(166, 175)',
-    '(198, 244)',
-    '(243, 251)',
-    '(263, 277)',
-    '(276, 287)',
-    '(314, 359)',
-    '(358, 367)',
-    '(390, 436)',
-    '(435, 446)',
-    '(459, 475)',
-    '(474, 485)',
-    '(512, 557)',
-    '(556, 565)')
-LYS_BONDS_NAMES <- c("var_has_5_126", "var_has_29_114", "var_has_75_93", "var_has_63_79")
+  c(
+    "(52, 61)",
+    "(74, 90)",
+    "(89, 100)",
+    "(122, 167)",
+    "(166, 175)",
+    "(198, 244)",
+    "(243, 251)",
+    "(263, 277)",
+    "(276, 287)",
+    "(314, 359)",
+    "(358, 367)",
+    "(390, 436)",
+    "(435, 446)",
+    "(459, 475)",
+    "(474, 485)",
+    "(512, 557)",
+    "(556, 565)"
+  )
 
-prec_is_good <-
-  df %>%
-  filter(!is.na(var_is_good)) %>%
-  group_by(scan_id, prec_sequence) %>%
-  summarise(prec_is_good = sum(var_is_good) > 0)
-df <- df %>% left_join(prec_is_good)
 
-scan_is_good <-
-  df %>%
-  filter(!is.na(prec_is_good)) %>%
-  group_by(scan_id) %>%
-  summarise(scan_is_good = sum(prec_is_good) > 0)
-df <- df %>% left_join(scan_is_good)
+
 
 # Dobrých scanů je zhruba čtvrtina oproti těm špatným
 df %>%
@@ -62,51 +49,6 @@ df %>%
   distinct(scan_id, prec_sequence, var_bonds, var_is_good) %>%
   ggplot(aes(var_is_good)) +
   geom_bar()
-
-plot_diff <- function(df, ...) {
-  df %>%
-    pivot_longer(
-      c(...),
-      names_to = "variable",
-      values_to = "value"
-    ) %>%
-    ggplot(aes(var_is_good, value)) +
-    geom_boxplot(aes(color=prec_is_good, fill=scan_is_good)) +
-    facet_wrap(vars(variable), ncol = 4, scales = "free_y") +
-    scale_color_manual(values=c("#215264", "#26734A")) +
-    scale_fill_manual(values = c("#C16E45", "#D3B27C"))
-}
-
-var_intensity_ratios <-
-  df %>%
-  group_by(scan_id, prec_sequence, var_bonds) %>%
-  distinct(frag_id, .keep_all = TRUE) %>%
-  summarise(var_intensity_ratio =
-              sum(frag_intensity) / first(scan_total_intensity)
-  ) %>%
-  ungroup()
-
-df <-
-  df %>%
-  left_join(var_intensity_ratios) %>%
-  mutate(
-    prec_mod_count = lengths(str_split(prec_mods, " \\+ ")),
-    frag_mod_count = lengths(str_split(frag_mods, " \\+ ")),
-    frag_disconnected_cys_count =
-      str_split(frag_disconnected_cys, " \\+ ") %>%
-      map_dbl(~sum(!is.na(.x))),
-    var_has_bonds =
-      str_split(var_bonds, " \\+ ") %>%
-      map(~ as_tibble_row(setNames(LYS_BONDS %in% .x, LYS_BONDS_NAMES)))
-  ) %>%
-  unnest(var_has_bonds) %>%
-  group_by(scan_id, prec_sequence, var_bonds) %>%
-  mutate(
-    across(
-      c(frag_mass, frag_charge, frag_error_ppm, frag_mod_count, frag_break_count, frag_intensity_ratio, frag_disconnected_cys_count),
-      list(median = median)
-    )
-  )
 
 df %>%
   plot_diff(
@@ -137,17 +79,87 @@ df %>%
   pivot_longer(c(var_has_5_126, var_has_29_114, var_has_63_79, var_has_75_93)) %>%
   ggplot(aes(var_is_good)) +
   geom_bar() +
-  facet_wrap(~ name)
+  facet_wrap(~name)
 
 # Chybí nám data o posledních dvou můstcích
-df %>% filter(var_has_5_126) %>% ggplot(aes(var_is_good)) + geom_bar()
-df %>% filter(var_has_29_114) %>% ggplot(aes(var_is_good)) + geom_bar()
-df %>% filter(var_has_63_79) %>% ggplot(aes(var_is_good)) + geom_bar()
-df %>% filter(var_has_75_93) %>% ggplot(aes(var_is_good)) + geom_bar()
+df %>%
+  filter(var_has_5_126) %>%
+  ggplot(aes(var_is_good)) +
+  geom_bar()
+df %>%
+  filter(var_has_29_114) %>%
+  ggplot(aes(var_is_good)) +
+  geom_bar()
+df %>%
+  filter(var_has_63_79) %>%
+  ggplot(aes(var_is_good)) +
+  geom_bar()
+df %>%
+  filter(var_has_75_93) %>%
+  ggplot(aes(var_is_good)) +
+  geom_bar()
 
 df %>%
   distinct(scan_id, prec_sequence, var_bonds, .keep_all = TRUE) %>%
   filter(var_is_good & prec_is_good)
+
+normalize <- function(xs) {
+  (xs - min(xs)) / (max(xs) - min(xs))
+}
+
+df %>%
+  filter(!is.na(frag_sequence)) %>%
+  mutate(
+    across(
+      c(
+        frag_charge, frag_error_ppm, frag_break_count, frag_mod_count,
+        prec_charge, prec_max_mc_count, prec_error, prec_mass, prec_variant_count
+      ),
+      c("norm" = normalize)
+    )
+  ) %>%
+  mutate(
+    frag_score =
+      1 / (0.5 +
+        16 * frag_charge_norm +
+        4 * frag_error_ppm_norm +
+        4 * frag_mod_count_norm +
+        if_else(
+          is.na(frag_connected_bonds) & is.na(frag_disconnected_cys),
+          2 * frag_break_count_norm,
+          0
+        ) +
+        0.5
+      ),
+    prec_score = 1 / (0.5 +
+      8 * prec_mass_norm +
+      2 * prec_max_mc_count_norm +
+      4 * prec_error_norm +
+      64 * prec_variant_count_norm +
+      0.5
+    )
+  ) %>%
+  group_by(scan_id, prec_sequence, var_bonds) %>%
+  arrange(desc(frag_score)) %>%
+  distinct(target_mz, .keep_all = TRUE) %>%
+  summarise(
+    across(
+      c(var_is_good, var_has_75_93, var_has_5_126, var_has_29_114, var_has_63_79),
+      first
+    ),
+    var_score = first(prec_score) + median(frag_score)
+  ) %>%
+  mutate(
+    var_rank = min_rank(desc(var_score)),
+    multiple = n_distinct(var_is_good) > 1
+  ) %>%
+  # filter(multiple, var_rank %in% c(1, 2)) %>%
+  ungroup() %>%
+  filter(!is.na(var_is_good)) %>%
+  ggplot(aes(var_is_good, var_score)) +
+  geom_boxplot(aes(alpha = 0.1)) +
+  geom_quasirandom(aes(color = var_has_63_79)) +
+  ylim(0, 1)
 
 # df %>%
 #   separate_rows(connected_bonds, sep="\\+") %>%
@@ -262,7 +274,7 @@ df %>%
   filter(n > 1) %>%
   ggplot(aes(scan, deviation)) +
   geom_col(aes(color = scan)) +
-  theme(legend.position="none")
+  theme(legend.position = "none")
 
 
 # Matching precursor vs MSGF+ ---------------------------------------------
@@ -289,7 +301,7 @@ my_vs_their %>%
   mutate(
     no_match =
       all(is.na(my_sequence)) ||
-      all(their_sequence_nomod != my_sequence)
+        all(their_sequence_nomod != my_sequence)
   ) %>%
   ungroup() %>%
   filter(no_match) %>%
@@ -305,7 +317,7 @@ my_vs_their %>%
   mutate(
     no_match =
       all(is.na(my_sequence)) ||
-      first(their_sequence_nomod) != first(my_sequence)
+        first(their_sequence_nomod) != first(my_sequence)
   ) %>%
   ungroup() %>%
   filter(no_match) %>%
@@ -323,7 +335,7 @@ my_vs_their %>%
   mutate(
     no_match =
       all(is.na(their_sequence)) ||
-      all(their_sequence_nomod != my_sequence)
+        all(their_sequence_nomod != my_sequence)
   ) %>%
   ungroup() %>%
   filter(no_match & cys_bonds == 0) %>%

@@ -440,7 +440,7 @@ def write_matched_fragments(
         total_intensity = sum(scan.fragments_intensity)
 
         # ADD FOR BSA
-        # if precursor.mass > 5500 or precursor.to_dict()["prec_max_mc_count"] > 3:
+        # if precursor.mass > 6000 or precursor.to_dict()["prec_max_mc_count"] > 3:
         #    continue
 
         targets = []

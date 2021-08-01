@@ -43,3 +43,14 @@ BSA_BONDS = [
         (557, 566),
     ]
 ]
+
+
+def get_golden_bonds(protein):
+    if protein == "LYS":
+        return LYS_BONDS
+    elif protein == "LIP":
+        return LIP_BONDS
+    elif protein == "OVA" or protein == "GENOVA":
+        return OVA_BONDS
+    elif protein == "BSA":
+        return BSA_BONDS

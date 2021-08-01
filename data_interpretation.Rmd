@@ -1,0 +1,156 @@
+```{r}
+library(tidyverse)
+```
+
+Načtení dat.
+
+```{r}
+LYS_BONDS <- c("(5, 126)", "(29, 114)", "(75, 93)", "(63, 79)")
+LYS_BONDS_NAMES <- c("var_has_5_126", "var_has_29_114", "var_has_75_93", "var_has_63_79")
+df <-
+  read_delim(
+    "out/csv/fragment_matches_LYS_AT_segments=3_breaks=2_error=10ppm.csv",
+    delim = ";"
+  )
+df
+```
+
+Přidání informace o tom, zda je daný scan a prekurzor dobrý.
+
+```{r}
+prec_is_good <-
+  df %>%
+  filter(!is.na(var_is_good)) %>%
+  group_by(scan_id, prec_sequence) %>%
+  summarise(prec_is_good = sum(var_is_good) > 0)
+df <- df %>% left_join(prec_is_good)
+
+scan_is_good <-
+  df %>%
+  filter(!is.na(prec_is_good)) %>%
+  group_by(scan_id) %>%
+  summarise(scan_is_good = sum(prec_is_good) > 0)
+df <- df %>% left_join(scan_is_good)
+
+df %>% select(scan_id, scan_is_good, prec_sequence, prec_is_good)
+```
+
+Přidání informace o mediánech jednotlivých `frag` proměnných, o intenzitě celé varianty a o přítomnosti jednotlivých můstků v ní.
+
+```{r}
+var_intensity_ratios <-
+  df %>%
+  group_by(scan_id, prec_sequence, var_bonds) %>%
+  distinct(frag_id, .keep_all = TRUE) %>%
+  summarise(
+    var_intensity_ratio = sum(frag_intensity) / first(scan_total_intensity)
+  ) %>%
+  ungroup()
+
+df <-
+  df %>%
+  left_join(var_intensity_ratios) %>%
+  mutate(
+    prec_mod_count = lengths(str_split(prec_mods, " \\+ ")),
+    frag_mod_count = lengths(str_split(frag_mods, " \\+ ")),
+    frag_disconnected_cys_count =
+      str_split(frag_disconnected_cys, " \\+ ") %>%
+      map_dbl(~sum(!is.na(.x))),
+    var_has_bonds =
+      str_split(var_bonds, " \\+ ") %>%
+      map(~ as_tibble_row(setNames(LYS_BONDS %in% .x, LYS_BONDS_NAMES)))
+  ) %>%
+  unnest(var_has_bonds) %>%
+  group_by(scan_id, prec_sequence, var_bonds) %>%
+  mutate(
+    across(
+      c(
+        frag_mass, 
+        frag_charge, 
+        frag_error_ppm, 
+        frag_mod_count, 
+        frag_break_count, 
+        frag_intensity_ratio, 
+        frag_disconnected_cys_count
+      ),
+      list(median = median)
+    )
+  ) %>% 
+  ungroup()
+```
+
+Funkce na srovnávání různých proměnných v jedom facetovaném grafu.
+
+```{r}
+plot_diff <- function(df, ..., ncol = 4) {
+  df %>%
+    pivot_longer(
+      c(...),
+      names_to = "variable",
+      values_to = "value"
+    ) %>%
+    ggplot(aes(var_is_good, value)) +
+    geom_boxplot(aes(color=prec_is_good, fill=scan_is_good)) +
+    facet_wrap(vars(variable), ncol = ncol, scales = "free_y") +
+    scale_color_manual(values=c("#215264", "#26734A")) +
+    scale_fill_manual(values = c("#C16E45", "#D3B27C"))
+}
+```
+
+Zobrazení `frag` proměnných.
+
+```{r}
+df %>%
+  plot_diff(
+    frag_mass, frag_mass_median,
+    frag_charge, frag_charge_median,
+    frag_error_ppm, frag_error_ppm_median,
+    frag_mod_count, frag_mod_count_median,
+    frag_break_count, frag_break_count_median,
+    frag_intensity_ratio, frag_intensity_ratio_median,
+    frag_disconnected_cys_count, frag_disconnected_cys_count_median
+  )
+```
+
+Zdá se být důležitých následujících pět. Nejsilnější prediktor je náboj (a s ním související hmota), poté počet breaků, chyba a počet modů.
+
+```{r}
+df %>%
+  plot_diff(
+    frag_mass_median,
+    frag_charge_median,
+    frag_error_ppm_median,
+    frag_mod_count_median,
+    frag_break_count_median,
+    ncol = 3
+  )
+```
+
+Zobrazení `prec` proměnných.
+
+```{r warning=FALSE}
+df %>%
+  distinct(scan_id, prec_sequence, var_bonds, .keep_all = TRUE) %>% 
+  plot_diff(
+    prec_charge, prec_segment_count, prec_max_mc_count, prec_cys_bond_count,
+    prec_mass, prec_error, prec_alkylation_count, prec_variant_count,
+    prec_mod_count, var_intensity_ratio
+  )
+```
+
+Zde je hodně silných prediktorů. Dohromady s těmi z `frag` to vypadá následovně.
+
+```{r warning=FALSE}
+df %>%
+  plot_diff(
+    prec_charge, prec_segment_count, prec_max_mc_count, prec_cys_bond_count,
+    prec_mass, prec_error, prec_variant_count,
+    prec_mod_count, var_intensity_ratio,
+    frag_mass_median,
+    frag_charge_median,
+    frag_error_ppm_median,
+    frag_mod_count_median,
+    frag_break_count_median,
+    ncol = 3
+  )
+```

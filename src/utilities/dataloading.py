@@ -47,9 +47,13 @@ def load_fragment_matches(
         return pickle.load(f)
 
 
-def cleave_protein(protein: str):
+def load_protein(protein: str):
     seq_path = f"../data/fasta/{protein}.fasta"
-    protein = [r.sequence for r in fasta.read(seq_path)][0]
+    return [r.sequence for r in fasta.read(seq_path)][0]
+
+
+def cleave_protein(protein: str):
+    protein = load_protein(protein)
     peptides = []
     for b, e in trypsin(protein):
         seq = protein[b:e]
