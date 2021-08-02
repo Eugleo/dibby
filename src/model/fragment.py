@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple, Iterable
+from typing import List, Tuple, Iterable, Collection
 
 from src.model.modification import Modification
 
@@ -20,9 +20,9 @@ class Fragment:
     charge: int
     break_count: int
     error_ppm: float
-    modifications: Iterable[Modification]
-    connected_bonds: List[Tuple[int, int]]
-    disconnected_cys: List[int]
+    modifications: Collection[Modification]
+    connected_bonds: Collection[Tuple[int, int]]
+    disconnected_cys: Collection[int]
 
     def to_dict(self):
         return {

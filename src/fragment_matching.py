@@ -430,6 +430,9 @@ def write_matched_fragments(
     output_path: str,
     max_allowed_breaks: int,
     error_ppm: float,
+    max_allowed_mass: float = None,
+    max_allowed_mc_count: int = None,
+    max_allowed_charge: int = None,
 ):
     print(f"Writing the matched fragments to {output_path}")
     fragment_matches = []
@@ -439,9 +442,14 @@ def write_matched_fragments(
         precursor: Precursor = precursor_match["precursor"]
         total_intensity = sum(scan.fragments_intensity)
 
-        # ADD FOR BSA
-        # if precursor.mass > 6000 or precursor.to_dict()["prec_max_mc_count"] > 3:
-        #    continue
+        if max_allowed_mass is not None and precursor.mass > max_allowed_mass:
+            continue
+
+        if (
+            max_allowed_mc_count is not None
+            and precursor.to_dict()["prec_max_mc_count"] > max_allowed_mc_count
+        ):
+            continue
 
         targets = []
         for frag_id, (frag_mz, frag_intensity) in enumerate(
@@ -451,8 +459,10 @@ def write_matched_fragments(
             max_charge = min(
                 scan.prec_charge,
                 math.trunc(coef / (frag_mz - err_margin(frag_mz, error_ppm=error_ppm))),
-                # 3,  # ADD FOR BSA
             )
+
+            if max_allowed_charge is not None:
+                max_charge = min(max_charge, max_allowed_charge)
 
             for ch in range(1, max_charge + 1):
                 targets.append(
@@ -554,6 +564,27 @@ if __name__ == "__main__":
         required=False,
         help="code to append to the output file name",
     )
+    args.add_argument(
+        "--max_charge",
+        type=int,
+        default=None,
+        required=False,
+        help="max charge",
+    )
+    args.add_argument(
+        "--max_prec_mass",
+        type=float,
+        default=None,
+        required=False,
+        help="max precursor mass",
+    )
+    args.add_argument(
+        "--max_mc",
+        type=int,
+        default=None,
+        required=False,
+        help="max missed cleavages",
+    )
 
     # Execute the parse_args() method
     args = args.parse_args()
@@ -575,6 +606,9 @@ if __name__ == "__main__":
         ),
         max_allowed_breaks=args.breaks,
         error_ppm=args.error,
+        max_allowed_mass=args.max_prec_mass,
+        max_allowed_mc_count=args.max_mc,
+        max_allowed_charge=args.max_charge,
     )
 
 # Optimizations, measured on 845–3896

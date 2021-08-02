@@ -1,5 +1,6 @@
 import pickle
 from typing import Tuple, List, Optional, Dict
+import tqdm
 
 from src.model.scan import read_mgf, Scan
 from src.utilities.constants import (
@@ -215,7 +216,7 @@ def write_matched_precursors(
 ) -> List[Dict]:
     result = []
     print(f"Looking for matches...")
-    for scan in scans:
+    for scan in tqdm.tqdm(scans):
         precursors = _precursors_matching_scan(
             tryptides=cleaved_tryptides,
             scan=scan,
@@ -238,7 +239,6 @@ def write_matched_precursors(
 
 if __name__ == "__main__":
     import argparse
-    import tqdm
 
     args = argparse.ArgumentParser(description="Save precursor matches for given scans")
 
