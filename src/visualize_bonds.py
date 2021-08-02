@@ -1,6 +1,9 @@
 import itertools
-from typing import List, Dict, Callable, Tuple, Set
+from typing import List, Dict, Callable
+import matplotlib.ticker as mticker
 
+import numpy as np
+import numpy.lib.recfunctions as rf
 from matplotlib import pyplot as plt
 
 from src.model.fragment import Fragment
@@ -20,27 +23,53 @@ def normalize(x, xs):
     return abs(x - min(xs)) / (bottom if bottom else 1)
 
 
-def draw(graph, node_scores, edge_scores, ax, cmap=plt.get_cmap("PiYG")):
-    node_colors = [cmap(float(s)) for s in node_scores]
-    edge_colors = [cmap(float(s)) for s in edge_scores]
-    return nx.draw_circular(
-        graph,
-        ax=ax,
-        with_labels=True,
-        node_size=1200,
-        font_size=12,
-        node_color="#E7DBB7",
-        linewidths=2,
-        arrowsize=10,
-        edgecolors=node_colors,
-        edge_color=edge_colors,
-        width=[0.3 if sc < 0.5 else 2 for sc in edge_scores],
-        connectionstyle="arc3,rad=0.2",
-    )
+def draw(
+    graph, node_scores, edge_scores, ax, as_matrix: bool, cmap=plt.get_cmap("PiYG")
+):
+    if as_matrix:
+        ns = len(graph.nodes())
+        matrix = np.zeros([ns, ns, 4])
+        encode = {n: i for i, n in enumerate(graph.nodes())}
+        encoded_edge_scores = {
+            tuple(encode[x] for x in edge): score
+            for score, edge in zip(edge_scores, graph.edges())
+        }
+        for index, _ in np.ndenumerate(matrix):
+            x, y, i = index
+            if x == y:
+                matrix[index] = cmap(float(node_scores[x]))[i]
+            else:
+                matrix[index] = cmap(float(encoded_edge_scores[(x, y)]))[i]
+        ax.imshow(matrix)
+        ax.set_xticks(np.arange(ns))
+        ax.set_yticks(np.arange(ns))
+        ax.set_xticklabels(graph.nodes())
+        ax.set_yticklabels(graph.nodes())
+        return ax
+    else:
+        node_colors = [cmap(float(s)) for s in node_scores]
+        edge_colors = [cmap(float(s)) for s in edge_scores]
+        return nx.draw_circular(
+            graph,
+            ax=ax,
+            with_labels=True,
+            node_size=1200,
+            font_size=12,
+            node_color="#E7DBB7",
+            linewidths=2,
+            arrowsize=10,
+            edgecolors=node_colors,
+            edge_color=edge_colors,
+            width=[0.3 if sc < 0.5 else 2 for sc in edge_scores],
+            connectionstyle="arc3,rad=0.2",
+        )
 
 
-def build_graph(cysteines: List[int]):
-    nodes = list(reversed(cysteines[3:] + cysteines[:3]))
+def build_graph(cysteines: List[int], as_matrix: bool):
+    if as_matrix:
+        nodes = sorted(cysteines)
+    else:
+        nodes = list(reversed(cysteines[3:] + cysteines[:3]))
     return nx.DiGraph(nx.complete_graph(nodes))
 
 
@@ -121,8 +150,12 @@ def numerator(match: Dict):
         (79, 126),
         (93, 114),
         (93, 126),
+        (70, 262),
+        (29, 119),
+        (29, 381),
+        (72, 381),
     }
-    middle = {(5, 126), (5, 63), (5, 93)}
+    middle = {(5, 126), (5, 63), (5, 93), (67, 262), (29, 366)}
 
     frag: Fragment = match["fragment"]
     bonds = set(frag.connected_bonds)
@@ -151,13 +184,6 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="protein code (usually three letters)",
-    )
-    args.add_argument(
-        "--kind",
-        type=str,
-        choices=["AT", "RAT"],
-        required=True,
-        help="measurement type (AT/RAT)",
     )
     args.add_argument(
         "--prec_error",
@@ -190,49 +216,61 @@ if __name__ == "__main__":
         required=False,
         help="code to append to the output file name",
     )
+    args.add_argument(
+        "--matrix",
+        type=bool,
+        default=False,
+        required=False,
+        help="render as a matrix",
+        action=argparse.BooleanOptionalAction,
+    )
     args = args.parse_args()
 
     prot_sequence = load_protein(args.protein)
     cysteines = [i for i, res in enumerate(prot_sequence) if res == "C"]
     golden_bonds = get_golden_bonds(args.protein)
 
-    fragment_matches = load_fragment_matches(
-        protein=args.protein,
-        kind=args.kind,
-        segments=args.prec_segments,
-        breaks=args.frag_breaks,
-        error=args.frag_error,
-        code=args.code,
-    )
-
-    if args.kind == "AT":
-        scoring_fun = lambda m: score_match(m, numerator(m))
-    else:
-        scoring_fun = score_match
-
-    positive_evidence, alkylation_evidence = calculate_scores(
-        scored_fragment_matches=fragment_matches,
-        cysteines=cysteines,
-        calc_weight=scoring_fun,
-        indirect_positive_ev_w=0,
-        alkylation_w=0.5,
-    )
-
-    graph = build_graph(cysteines=cysteines)
-    gn, ge = nodes_edges_from_golden(graph, golden_bonds)
-    n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
-
-    fig, axs = plt.subplots(1, ncols=2, figsize=(10, 5), dpi=300)
-
-    for ax in axs:
+    fig, axs = plt.subplots(2, 2, figsize=(10, 10), dpi=300)
+    for ax in axs.flat:
         ax.set_aspect("equal")
 
-    draw(graph, gn, ge, axs[0])
-    draw(graph, n, e, axs[1])
+    axs[0, 0].set_title("RAT, gold")
+    axs[0, 1].set_title("RAT, computed")
+    axs[1, 0].set_title("AT, gold")
+    axs[1, 1].set_title("AT, computed")
 
-    image_path = "../out/plots/{}_{}_segments={}_breaks={}_perr={}_ferr={}{}".format(
+    for kind, axes in [("RAT", axs[0, :]), ("AT", axs[1, :])]:
+        fragment_matches = load_fragment_matches(
+            protein=args.protein,
+            kind=kind,
+            segments=args.prec_segments,
+            breaks=args.frag_breaks,
+            error=args.frag_error,
+            code=args.code,
+        )
+
+        if kind == "AT":
+            scoring_fun = lambda m: score_match(m, numerator(m))
+        else:
+            scoring_fun = score_match
+
+        positive_evidence, alkylation_evidence = calculate_scores(
+            scored_fragment_matches=fragment_matches,
+            cysteines=cysteines,
+            calc_weight=scoring_fun,
+            indirect_positive_ev_w=0,
+            alkylation_w=0.5,
+        )
+
+        graph = build_graph(cysteines=cysteines, as_matrix=args.matrix)
+        gn, ge = nodes_edges_from_golden(graph, golden_bonds if kind == "AT" else [])
+        n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
+
+        draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
+        draw(graph, n, e, axes[1], as_matrix=args.matrix)
+
+    image_path = "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}".format(
         args.protein,
-        args.kind,
         args.prec_segments,
         args.frag_breaks,
         args.prec_error,
@@ -240,6 +278,5 @@ if __name__ == "__main__":
         "" if args.code is None else f"_{args.code}",
     )
 
-    fig.suptitle(f"{args.protein} {args.kind}", fontsize=24)
-
+    fig.tight_layout()
     fig.savefig(image_path)
