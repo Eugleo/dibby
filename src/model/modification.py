@@ -37,6 +37,8 @@ def combine_modifications(
     return list(set(result))
 
 
+NEM_ALKLATION = Modification("Cys Alkylation (ETM)", 125.0477)
+PAIR_NEM_ALKLATION = Modification("2x Cys Alkylation (ETM)", 250.0954)
 IAA_ALKYLATION = Modification("Cys Alkylation (IAA)", 57.0214)
 IAA_PAIR_ALKYLATION = Modification("2x Cys Alkylation (IAA)", IAA_ALKYLATION.mass * 2)
 CYS_BOND = Modification("Disulphide Bond (–H2)", -calculate_mass(formula="H2"))
