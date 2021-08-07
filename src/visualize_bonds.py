@@ -4,6 +4,7 @@ import matplotlib.ticker as mticker
 
 import numpy as np
 import numpy.lib.recfunctions as rf
+import pandas as pd
 from matplotlib import pyplot as plt
 
 from src.model.fragment import Fragment
@@ -120,20 +121,18 @@ def calculate_scores(
     alkylation_evidence = {c: 0 for c in cysteines}
 
     for match in scored_fragment_matches:
-        fragment: Fragment = match["fragment"]
-
-        if fragment is None:
+        if "frag_sequence" not in match:
             continue
 
         match_weight = calc_weight(match)
         cys_in_bonds = []
 
-        for b in fragment.connected_bonds:
+        for b in match["frag_connected_bonds"]:
             positive_evidence[b] += match_weight * positive_ev_w
             cys_in_bonds += list(b)
 
         # TODO: Check if only interesting matter
-        for c in fragment.disconnected_cys:
+        for c in match["frag_interesting_disconnected_cys"]:
             cys_in_bonds.append(c)
             for b in positive_evidence:
                 if c in b:
@@ -141,7 +140,7 @@ def calculate_scores(
 
         for c in cysteines:
             if c not in cys_in_bonds and any(
-                b <= c < e for b, e in fragment.residue_ranges
+                b <= c < e for b, e in match["frag_residue_ranges"]
             ):
                 alkylation_evidence[c] += match_weight * alkylation_w
 
@@ -149,37 +148,27 @@ def calculate_scores(
 
 
 def numerator(match: Dict):
-    lowest = {
-        (63, 114),
-        (5, 75),
-        (5, 79),
-        (75, 114),
-        (75, 126),
-        (79, 114),
-        (79, 126),
-        (93, 114),
-        (93, 126),
-        (70, 262),
+    lowest = {(75, 114), (79, 114), (79, 126), (93, 114)} | {
         (29, 119),
         (29, 381),
         (72, 381),
     }
-    middle = {(5, 126), (5, 63), (5, 93), (67, 262), (29, 366)}
+    middle = {(5, 126), (93, 126), (75, 126)}
 
-    frag: Fragment = match["fragment"]
-    bonds = set(frag.connected_bonds)
+    bonds = set(match["frag_connected_bonds"])
 
     if not bonds.isdisjoint(lowest):
         return 0.1
     elif not bonds.isdisjoint(middle):
-        return 0.4
+        return 0.8
     else:
         return 1
 
 
 def score_match(match: Dict, numerator=1):
-    prec: Precursor = match["precursor"]
-    return numerator / (prec.error_ppm + prec.to_dict()["prec_max_mc_count"] + 1)
+    return numerator / (
+        match["prec_antiscore"] + 0.5 * match["prec_median_frag_antiscore"]
+    )
 
 
 if __name__ == "__main__":
@@ -263,8 +252,54 @@ if __name__ == "__main__":
         else:
             scoring_fun = score_match
 
+        fragment_records = [
+            fm["scan"].to_dict()
+            | fm["precursor"].to_dict()
+            | fm["variant"].to_dict()
+            | (fm["fragment"].to_dict())
+            | {"prec_variant_count": fm["variant_count"]}
+            for fm in fragment_matches
+            if fm["fragment"] is not None
+        ]
+        df = pd.DataFrame(fragment_records)
+
+        df["frag_mod_count"] = [len(r) for r in df["frag_mods"]]
+        cols = [
+            "frag_charge",
+            "frag_error_ppm",
+            "frag_mod_count",
+            "frag_break_count",
+            "prec_mass",
+            "prec_max_mc_count",
+            "prec_error",
+            "prec_variant_count",
+        ]
+        for col in cols:
+            c = df[col]
+            df[col + "_norm"] = (c - np.min(c)) / (np.max(c) - np.min(c))
+
+        df["frag_antiscore"] = (
+            1
+            + 16 * df["frag_charge_norm"]
+            + 4 * df["frag_error_ppm_norm"]
+            + 4 * df["frag_mod_count_norm"]
+        )
+
+        df["prec_antiscore"] = (
+            1
+            + 32 * df["prec_variant_count_norm"]
+            + 4 * df["prec_max_mc_count_norm"]
+            + 4 * df["prec_mass_norm"]
+            + 4 * df["prec_error_norm"]
+        )
+
+        df["var_bonds"] = [str(r) for r in df["var_bonds"]]
+        df["prec_median_frag_antiscore"] = df.groupby(
+            ["scan_id", "prec_sequence", "var_bonds"], as_index=False
+        )["frag_antiscore"].transform(np.median)
+
         positive_evidence, alkylation_evidence = calculate_scores(
-            scored_fragment_matches=fragment_matches,
+            scored_fragment_matches=df.to_dict(orient="records"),
             cysteines=cysteines,
             calc_weight=scoring_fun,
             indirect_positive_ev_w=0,

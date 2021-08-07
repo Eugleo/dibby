@@ -107,6 +107,21 @@ normalize <- function(xs) {
   (xs - min(xs)) / (max(xs) - min(xs))
 }
 
+df["frag_antiscore"] = (
+  1
+  + 8 * df["frag_charge_norm"]
+  + 2 * df["frag_error_ppm_norm"]
+  + 2 * df["frag_mod_count_norm"]
+)
+
+df["prec_antiscore"] = (
+  1
+  + 32 * df["prec_variant_count_norm"]
+  + 4 * df["prec_max_mc_count_norm"]
+  + 4 * df["prec_mass_norm"]
+  + 4 * df["prec_error_norm"]
+)
+
 df %>%
   filter(!is.na(frag_sequence)) %>%
   mutate(
@@ -124,18 +139,13 @@ df %>%
         16 * frag_charge_norm +
         4 * frag_error_ppm_norm +
         4 * frag_mod_count_norm +
-        if_else(
-          is.na(frag_connected_bonds) & is.na(frag_disconnected_cys),
-          2 * frag_break_count_norm,
-          0
-        ) +
         0.5
       ),
     prec_score = 1 / (0.5 +
-      8 * prec_mass_norm +
-      2 * prec_max_mc_count_norm +
+      4 * prec_mass_norm +
+      4 * prec_max_mc_count_norm +
       4 * prec_error_norm +
-      64 * prec_variant_count_norm +
+      32 * prec_variant_count_norm +
       0.5
     )
   ) %>%
@@ -147,7 +157,7 @@ df %>%
       c(var_is_good, var_has_75_93, var_has_5_126, var_has_29_114, var_has_63_79),
       first
     ),
-    var_score = first(prec_score) + median(frag_score)
+    var_score = first(prec_score) + 0.5 *  median(frag_score)
   ) %>%
   mutate(
     var_rank = min_rank(desc(var_score)),
