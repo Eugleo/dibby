@@ -16,7 +16,7 @@ LYS_BONDS <- c("(5, 126)", "(29, 114)", "(75, 93)", "(63, 79)")
 LYS_BONDS_NAMES <- c("var_has_5_126", "var_has_29_114", "var_has_75_93", "var_has_63_79")
 df <-
   read_delim(
-    "out/csv/fragment_matches_LIP_AT_segments=3_breaks=2_error=5ppm.csv",
+    "out/csv/fragment_matches_GENOVA_AT_segments=3_breaks=2_error=10ppm.csv",
     delim = ";"
   )
 df
@@ -89,54 +89,20 @@ df <-
 Kvalita metriky.
 
 ```{r warning=FALSE}
-df %>%
-  filter(!is.na(frag_sequence)) %>%
-  mutate(
-    across(
-      c(
-        frag_charge, frag_error_ppm, frag_break_count, frag_mod_count,
-        prec_charge, prec_max_mc_count, prec_error, prec_mass, prec_variant_count
-      ),
-      c("norm" = normalize)
-    )
-  ) %>%
-  mutate(
-    frag_score =
-      1 / (0.5 +
-        16 * frag_charge_norm +
-        4 * frag_error_ppm_norm +
-        4 * frag_mod_count_norm +
-        0.5
-      ),
-    prec_score = 1 / (0.5 +
-      4 * prec_mass_norm +
-      4 * prec_max_mc_count_norm +
-      4 * prec_error_norm +
-      32 * prec_variant_count_norm +
-      0.5
-    )
-  ) %>%
-  group_by(scan_id, prec_sequence, var_bonds) %>%
-  arrange(desc(frag_score)) %>%
-  distinct(target_mz, .keep_all = TRUE) %>%
-  summarise(
-    across(
-      c(var_is_good, var_has_75_93, var_has_5_126, var_has_29_114, var_has_63_79),
-      first
-    ),
-    var_score = first(prec_score) + 0.5 *  median(frag_score)
-  ) %>%
-  mutate(
-    var_rank = min_rank(desc(var_score)),
-    multiple = n_distinct(var_is_good) > 1
-  ) %>%
-  # filter(multiple, var_rank %in% c(1, 2)) %>%
-  ungroup() %>%
+combined %>%
   filter(!is.na(var_is_good)) %>%
-  ggplot(aes(var_is_good, var_score)) +
+  ggplot(aes(var_is_good, var_score), show_lege) +
   geom_boxplot(alpha = 0.1) +
   geom_quasirandom(aes(color=var_is_good)) +
-  ylim(0, 1)
+  ylim(0, 1) +
+  facet_wrap(~sample, ncol = 2) +
+  labs(
+    title = "Evaluating the scoring metric on different samples",
+    subtitle = "Variants are split into those that do not contradict the known positions of DBs, and those that do.",
+    x = "The variant bonds do not contradict expert knowledge",
+    y = "Variant score"
+  ) +
+  theme(legend.position = "none")
 ```
 
 Funkce na srovnávání různých proměnných v jedom facetovaném grafu.

@@ -1,6 +1,57 @@
 library(tidyverse)
 
 
+lys_df <- lys_df %>% mutate(sample="LYS")
+bsa_df <- bsa_df %>% mutate(sample="BSA")
+genova_df <- genova_df %>% mutate(sample="GENOVA")
+lip_df <- lip_df %>% mutate(sample="LIP")
+
+
+combined <-
+  bind_rows(lys_df, bsa_df, genova_df, lip_df)
+
+combined <-
+  conbined %>%
+  filter(!is.na(frag_sequence)) %>%
+  mutate(
+    across(
+      c(
+        frag_charge, frag_error_ppm, frag_break_count, frag_mod_count,
+        prec_charge, prec_max_mc_count, prec_error, prec_mass, prec_variant_count
+      ),
+      c("norm" = normalize)
+    )
+  ) %>%
+  mutate(
+    frag_score =
+      1 / (0.5 +
+             16 * frag_charge_norm +
+             4 * frag_error_ppm_norm +
+             4 * frag_mod_count_norm +
+             0.5
+      ),
+    prec_score = 1 / (0.5 +
+                        4 * prec_mass_norm +
+                        4 * prec_max_mc_count_norm +
+                        4 * prec_error_norm +
+                        32 * prec_variant_count_norm +
+                        0.5
+    )
+  ) %>%
+  group_by(scan_id, prec_sequence, var_bonds) %>%
+  arrange(desc(frag_score)) %>%
+  distinct(target_mz, .keep_all = TRUE) %>%
+  summarise(
+    across(c(var_is_good, sample), first),
+    var_score = first(prec_score) + 0.5 *  median(frag_score)
+  ) %>%
+  mutate(
+    var_rank = min_rank(desc(var_score)),
+    multiple = n_distinct(var_is_good) > 1
+  ) %>%
+  # filter(multiple, var_rank %in% c(1, 2)) %>%
+  ungroup()
+
 df <-
   read_delim(
     "out/csv/fragment_matches_OVA_AT_segments=3_breaks=2_error=5ppm.csv",

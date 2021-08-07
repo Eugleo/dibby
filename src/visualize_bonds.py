@@ -166,8 +166,9 @@ def numerator(match: Dict):
 
 
 def score_match(match: Dict, numerator=1):
-    return numerator / (
-        match["prec_antiscore"] + 0.5 * match["prec_median_frag_antiscore"]
+    return (
+        numerator / match["prec_antiscore"]
+        + 0.5 * numerator / match["prec_median_frag_antiscore"]
     )
 
 
