@@ -23,9 +23,11 @@ def normalize(x, xs):
     return abs(x - min(xs)) / (bottom if bottom else 1)
 
 
-def draw(
-    graph, node_scores, edge_scores, ax, as_matrix: bool, cmap=plt.get_cmap("PiYG")
-):
+def draw(graph, node_scores, edge_scores, ax, as_matrix: bool):
+    if as_matrix:
+        cmap = plt.get_cmap("GnBu")
+    else:
+        cmap = plt.get_cmap("PiYG")
     if as_matrix:
         ns = len(graph.nodes())
         matrix = np.zeros([ns, ns, 4])
@@ -40,12 +42,19 @@ def draw(
                 matrix[index] = cmap(float(node_scores[x]))[i]
             else:
                 matrix[index] = cmap(float(encoded_edge_scores[(x, y)]))[i]
-        ax.imshow(matrix)
+        im = ax.imshow(matrix)
         ax.set_xticks(np.arange(ns))
+        ax.set_xticks(np.arange(ns) + 0.5, minor=True)
         ax.set_yticks(np.arange(ns))
+        ax.set_yticks(np.arange(ns) + 0.5, minor=True)
         ax.set_xticklabels(graph.nodes())
         ax.set_yticklabels(graph.nodes())
-        return ax
+        ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
+        ax.spines[:].set_visible(False)
+        # ax.minorticks_on()
+        ax.grid(which="minor", color="white", linestyle="-", linewidth=3)
+        ax.tick_params(which="minor", bottom=False, left=False)
+        return im
     else:
         node_colors = [cmap(float(s)) for s in node_scores]
         edge_colors = [cmap(float(s)) for s in edge_scores]
@@ -56,11 +65,11 @@ def draw(
             node_size=1200,
             font_size=12,
             node_color="#E7DBB7",
-            linewidths=2,
+            linewidths=4,
             arrowsize=10,
             edgecolors=node_colors,
             edge_color=edge_colors,
-            width=[0.3 if sc < 0.5 else 2 for sc in edge_scores],
+            width=[0.5 if sc < 0.5 else 4 for sc in edge_scores],
             connectionstyle="arc3,rad=0.2",
         )
 
