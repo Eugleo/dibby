@@ -97,7 +97,7 @@ combined %>%
   ylim(0, 1) +
   facet_wrap(~sample, ncol = 2) +
   labs(
-    title = "Evaluating the scoring metric on different samples",
+    title = "Evaluation of the scoring metric on different samples",
     subtitle = "Variants are split into those that do not contradict the known positions of DBs, and those that do.",
     x = "The variant bonds do not contradict expert knowledge",
     y = "Variant score"

@@ -5,7 +5,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import numpy.lib.recfunctions as rf
 import pandas as pd
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, cm
 
 from src.model.fragment import Fragment
 from src.model.precursor import Precursor
@@ -29,6 +29,7 @@ def draw(graph, node_scores, edge_scores, ax, as_matrix: bool):
         cmap = plt.get_cmap("GnBu")
     else:
         cmap = plt.get_cmap("PiYG")
+
     if as_matrix:
         ns = len(graph.nodes())
         matrix = np.zeros([ns, ns, 4])
@@ -229,14 +230,14 @@ if __name__ == "__main__":
     cysteines = [i for i, res in enumerate(prot_sequence) if res == "C"]
     golden_bonds = get_golden_bonds(args.protein)
 
-    fig, axs = plt.subplots(2, 2, figsize=(10, 10), dpi=300)
+    fig, axs = plt.subplots(2, 2, figsize=(10, 10), dpi=300, constrained_layout=True)
     for ax in axs.flat:
         ax.set_aspect("equal")
 
-    axs[0, 0].set_title("RAT, gold")
-    axs[0, 1].set_title("RAT, computed")
-    axs[1, 0].set_title("AT, gold")
-    axs[1, 1].set_title("AT, computed")
+    axs[0, 0].set_title("RAT, gold", size=16)
+    axs[0, 1].set_title("RAT, computed", size=16)
+    axs[1, 0].set_title("AT, gold", size=16)
+    axs[1, 1].set_title("AT, computed", size=16)
 
     for kind, axes in [("RAT", axs[0, :]), ("AT", axs[1, :])]:
         fragment_matches = load_fragment_matches(
@@ -304,17 +305,20 @@ if __name__ == "__main__":
             cysteines=cysteines,
             calc_weight=scoring_fun,
             indirect_positive_ev_w=0,
-            alkylation_w=0.5,
+            alkylation_w=1,
         )
 
         graph = build_graph(cysteines=cysteines, as_matrix=args.matrix)
         gn, ge = nodes_edges_from_golden(graph, golden_bonds if kind == "AT" else [])
         n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
 
-        draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
+        im = draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
         draw(graph, n, e, axes[1], as_matrix=args.matrix)
-
-    image_path = "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}".format(
+        if args.matrix:
+            cmap = plt.get_cmap("GnBu")
+        else:
+            cmap = plt.get_cmap("PiYG")
+    image_path = "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}.pdf".format(
         args.protein,
         args.prec_segments,
         args.frag_breaks,
@@ -323,5 +327,10 @@ if __name__ == "__main__":
         "" if args.code is None else f"_{args.code}",
     )
 
-    fig.tight_layout()
-    fig.savefig(image_path)
+    fig.colorbar(
+        cm.ScalarMappable(cmap=cmap), ax=axs, shrink=0.3, orientation="horizontal"
+    )
+    fig.suptitle(f"Positions of disulfide bridges in {args.protein}", fontsize=24)
+    fig.savefig(
+        image_path,
+    )
