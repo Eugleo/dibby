@@ -8,7 +8,7 @@ An example output for lysozyme digested with trypsin can be seen below. You can 
 
 ![Visualization of the three disulphide bonds that were identified in lysozyme, that has a total of four bonds](./img/lys_example.png)
 
-Dibby started as a project for my bachelor thesis in the bioinformatics program at Charles University, Prague.
+Dibby started as a project for my [bachelor thesis](https://github.com/Eugleo/bachelor-thesis) in the bioinformatics program at Charles University, Prague. Some details about Dibby can be found in chapter 2 and 3 of said thesis. 
 
 ## Preparing data for Dibby
 
