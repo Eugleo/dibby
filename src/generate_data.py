@@ -1,4 +1,5 @@
 import re
+import sys
 from random import randrange, randint, choices, shuffle
 from typing import List, Dict, Tuple
 
@@ -480,6 +481,8 @@ if __name__ == "__main__":
         precursors += generate_unipeptides(cys_peptides)
 
     print(f"In total there's {len(precursors)} precursors.")
+
+    sys.exit()
 
     scans: List[Scan] = []
     fragment_records = []

@@ -92,14 +92,14 @@ Kvalita metriky.
 combined %>%
   filter(!is.na(var_is_good)) %>%
   ggplot(aes(var_is_good, var_score), show_lege) +
-  geom_boxplot(alpha = 0.1) +
-  geom_quasirandom(aes(color=var_is_good)) +
+  # geom_boxplot(alpha = 0.1) +
+  geom_violin(aes(color=var_is_good), draw_quantiles=c(0.5)) +
   ylim(0, 1) +
   facet_wrap(~sample, ncol = 2) +
   labs(
     title = "Evaluation of the scoring metric on different samples",
-    subtitle = "Variants are split into those that do not contradict the known positions of DBs, and those that do.",
-    x = "The variant bonds do not contradict expert knowledge",
+    subtitle = "Variants are split into those that contradict the known positions of DBs (bad),\nand those that do not (good).",
+    x = "The variant is good",
     y = "Variant score"
   ) +
   theme(legend.position = "none")

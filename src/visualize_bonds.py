@@ -224,113 +224,251 @@ if __name__ == "__main__":
         help="render as a matrix",
         action=argparse.BooleanOptionalAction,
     )
+    args.add_argument(
+        "--diff",
+        type=bool,
+        default=False,
+        required=False,
+        help="plot the difference after differential analysis",
+        action=argparse.BooleanOptionalAction,
+    )
     args = args.parse_args()
 
     prot_sequence = load_protein(args.protein)
     cysteines = [i for i, res in enumerate(prot_sequence) if res == "C"]
     golden_bonds = get_golden_bonds(args.protein)
 
-    fig, axs = plt.subplots(2, 2, figsize=(10, 10), dpi=300, constrained_layout=True)
-    for ax in axs.flat:
-        ax.set_aspect("equal")
+    if not args.diff:
+        fig, axs = plt.subplots(
+            2, 2, figsize=(10, 10), dpi=300, constrained_layout=True
+        )
+        for ax in axs.flat:
+            ax.set_aspect("equal")
 
-    axs[0, 0].set_title("RAT, gold", size=16)
-    axs[0, 1].set_title("RAT, computed", size=16)
-    axs[1, 0].set_title("AT, gold", size=16)
-    axs[1, 1].set_title("AT, computed", size=16)
+        axs[0, 0].set_title("RAT, ground truth", size=16)
+        axs[0, 1].set_title("RAT, measured & computed", size=16)
+        if args.protein == "GENOVA":
+            axs[0, 1].set_title("RAT, generated & computed", size=16)
+        axs[1, 0].set_title("AT, ground truth", size=16)
+        axs[1, 1].set_title("AT, measured & computed", size=16)
+        if args.protein == "GENOVA":
+            axs[0, 1].set_title("AT, generated & computed", size=16)
 
-    for kind, axes in [("RAT", axs[0, :]), ("AT", axs[1, :])]:
-        fragment_matches = load_fragment_matches(
-            protein=args.protein,
-            kind=kind,
-            segments=args.prec_segments,
-            breaks=args.frag_breaks,
-            error=args.frag_error,
-            code=args.code,
+        for kind, axes in [("RAT", axs[0, :]), ("AT", axs[1, :])]:
+            fragment_matches = load_fragment_matches(
+                protein=args.protein,
+                kind=kind,
+                segments=args.prec_segments,
+                breaks=args.frag_breaks,
+                error=args.frag_error,
+                code=args.code,
+            )
+
+            if kind == "AT":
+                scoring_fun = lambda m: score_match(m, numerator(m))
+            else:
+                scoring_fun = score_match
+
+            fragment_records = [
+                fm["scan"].to_dict()
+                | fm["precursor"].to_dict()
+                | fm["variant"].to_dict()
+                | (fm["fragment"].to_dict())
+                | {"prec_variant_count": fm["variant_count"]}
+                for fm in fragment_matches
+                if fm["fragment"] is not None
+            ]
+            df = pd.DataFrame(fragment_records)
+
+            df["frag_mod_count"] = [len(r) for r in df["frag_mods"]]
+            cols = [
+                "frag_charge",
+                "frag_error_ppm",
+                "frag_mod_count",
+                "frag_break_count",
+                "prec_mass",
+                "prec_max_mc_count",
+                "prec_error",
+                "prec_variant_count",
+            ]
+            for col in cols:
+                c = df[col]
+                df[col + "_norm"] = (c - np.min(c)) / (np.max(c) - np.min(c))
+
+            df["frag_antiscore"] = (
+                1
+                + 16 * df["frag_charge_norm"]
+                + 4 * df["frag_error_ppm_norm"]
+                + 4 * df["frag_mod_count_norm"]
+            )
+
+            df["prec_antiscore"] = (
+                1
+                + 32 * df["prec_variant_count_norm"]
+                + 4 * df["prec_max_mc_count_norm"]
+                + 4 * df["prec_mass_norm"]
+                + 4 * df["prec_error_norm"]
+            )
+
+            df["var_bonds"] = [str(r) for r in df["var_bonds"]]
+            df["prec_median_frag_antiscore"] = df.groupby(
+                ["scan_id", "prec_sequence", "var_bonds"], as_index=False
+            )["frag_antiscore"].transform(np.median)
+
+            positive_evidence, alkylation_evidence = calculate_scores(
+                scored_fragment_matches=df.to_dict(orient="records"),
+                cysteines=cysteines,
+                calc_weight=scoring_fun,
+                indirect_positive_ev_w=0,
+                alkylation_w=1,
+            )
+
+            graph = build_graph(cysteines=cysteines, as_matrix=args.matrix)
+            gn, ge = nodes_edges_from_golden(
+                graph, golden_bonds if kind == "AT" else []
+            )
+            n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
+
+            im = draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
+            draw(graph, n, e, axes[1], as_matrix=args.matrix)
+            if args.matrix:
+                cmap = plt.get_cmap("GnBu")
+            else:
+                cmap = plt.get_cmap("PiYG")
+        image_path = (
+            "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}.pdf".format(
+                args.protein,
+                args.prec_segments,
+                args.frag_breaks,
+                args.prec_error,
+                args.frag_error,
+                "" if args.code is None else f"_{args.code}",
+            )
+        )
+        image_path = f"../../bachelor-thesis/img/{args.protein.lower()}.pdf"
+
+        clb = fig.colorbar(
+            cm.ScalarMappable(cmap=cmap), ax=axs, shrink=0.3, orientation="horizontal"
+        )
+        clb.ax.set_title("Normalized evidence score", fontsize=16)
+        fig.suptitle(f"Positions of disulfide bridges in {args.protein}", fontsize=24)
+        fig.savefig(
+            image_path,
+        )
+    else:
+        fig, axs = plt.subplots(
+            1, 3, figsize=(12, 5.8), dpi=300, constrained_layout=True
+        )
+        for ax in axs.flat:
+            ax.set_aspect("equal")
+
+        axs[0].set_title("RAT, measured & computed", size=16)
+        axs[1].set_title("AT, no penalization", size=16)
+        axs[2].set_title(
+            "AT, penalization of blacklisted DBs\nbased on RAT results", size=16
         )
 
-        if kind == "AT":
-            scoring_fun = lambda m: score_match(m, numerator(m))
-        else:
-            scoring_fun = score_match
+        for kind, axes in zip(["RAT", "ATN", "AT"], axs):
+            fragment_matches = load_fragment_matches(
+                protein=args.protein,
+                kind=kind if kind != "ATN" else "AT",
+                segments=args.prec_segments,
+                breaks=args.frag_breaks,
+                error=args.frag_error,
+                code=args.code,
+            )
 
-        fragment_records = [
-            fm["scan"].to_dict()
-            | fm["precursor"].to_dict()
-            | fm["variant"].to_dict()
-            | (fm["fragment"].to_dict())
-            | {"prec_variant_count": fm["variant_count"]}
-            for fm in fragment_matches
-            if fm["fragment"] is not None
-        ]
-        df = pd.DataFrame(fragment_records)
+            if kind == "AT":
+                scoring_fun = lambda m: score_match(m, numerator(m))
+            else:
+                scoring_fun = score_match
 
-        df["frag_mod_count"] = [len(r) for r in df["frag_mods"]]
-        cols = [
-            "frag_charge",
-            "frag_error_ppm",
-            "frag_mod_count",
-            "frag_break_count",
-            "prec_mass",
-            "prec_max_mc_count",
-            "prec_error",
-            "prec_variant_count",
-        ]
-        for col in cols:
-            c = df[col]
-            df[col + "_norm"] = (c - np.min(c)) / (np.max(c) - np.min(c))
+            fragment_records = [
+                fm["scan"].to_dict()
+                | fm["precursor"].to_dict()
+                | fm["variant"].to_dict()
+                | (fm["fragment"].to_dict())
+                | {"prec_variant_count": fm["variant_count"]}
+                for fm in fragment_matches
+                if fm["fragment"] is not None
+            ]
+            df = pd.DataFrame(fragment_records)
 
-        df["frag_antiscore"] = (
-            1
-            + 16 * df["frag_charge_norm"]
-            + 4 * df["frag_error_ppm_norm"]
-            + 4 * df["frag_mod_count_norm"]
+            df["frag_mod_count"] = [len(r) for r in df["frag_mods"]]
+            cols = [
+                "frag_charge",
+                "frag_error_ppm",
+                "frag_mod_count",
+                "frag_break_count",
+                "prec_mass",
+                "prec_max_mc_count",
+                "prec_error",
+                "prec_variant_count",
+            ]
+            for col in cols:
+                c = df[col]
+                df[col + "_norm"] = (c - np.min(c)) / (np.max(c) - np.min(c))
+
+            df["frag_antiscore"] = (
+                1
+                + 16 * df["frag_charge_norm"]
+                + 4 * df["frag_error_ppm_norm"]
+                + 4 * df["frag_mod_count_norm"]
+            )
+
+            df["prec_antiscore"] = (
+                1
+                + 32 * df["prec_variant_count_norm"]
+                + 4 * df["prec_max_mc_count_norm"]
+                + 4 * df["prec_mass_norm"]
+                + 4 * df["prec_error_norm"]
+            )
+
+            df["var_bonds"] = [str(r) for r in df["var_bonds"]]
+            df["prec_median_frag_antiscore"] = df.groupby(
+                ["scan_id", "prec_sequence", "var_bonds"], as_index=False
+            )["frag_antiscore"].transform(np.median)
+
+            positive_evidence, alkylation_evidence = calculate_scores(
+                scored_fragment_matches=df.to_dict(orient="records"),
+                cysteines=cysteines,
+                calc_weight=scoring_fun,
+                indirect_positive_ev_w=0,
+                alkylation_w=1,
+            )
+
+            graph = build_graph(cysteines=cysteines, as_matrix=args.matrix)
+            gn, ge = nodes_edges_from_golden(
+                graph, golden_bonds if kind == "AT" else []
+            )
+            n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
+
+            # im = draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
+            draw(graph, n, e, axes, as_matrix=args.matrix)
+            if args.matrix:
+                cmap = plt.get_cmap("GnBu")
+            else:
+                cmap = plt.get_cmap("PiYG")
+        image_path = (
+            "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}.pdf".format(
+                args.protein,
+                args.prec_segments,
+                args.frag_breaks,
+                args.prec_error,
+                args.frag_error,
+                "" if args.code is None else f"_{args.code}",
+            )
         )
+        image_path = f"../../bachelor-thesis/img/{args.protein.lower()}-at-rat-diff.pdf"
 
-        df["prec_antiscore"] = (
-            1
-            + 32 * df["prec_variant_count_norm"]
-            + 4 * df["prec_max_mc_count_norm"]
-            + 4 * df["prec_mass_norm"]
-            + 4 * df["prec_error_norm"]
+        clb = fig.colorbar(
+            cm.ScalarMappable(cmap=cmap), ax=axs, shrink=0.3, orientation="horizontal"
         )
-
-        df["var_bonds"] = [str(r) for r in df["var_bonds"]]
-        df["prec_median_frag_antiscore"] = df.groupby(
-            ["scan_id", "prec_sequence", "var_bonds"], as_index=False
-        )["frag_antiscore"].transform(np.median)
-
-        positive_evidence, alkylation_evidence = calculate_scores(
-            scored_fragment_matches=df.to_dict(orient="records"),
-            cysteines=cysteines,
-            calc_weight=scoring_fun,
-            indirect_positive_ev_w=0,
-            alkylation_w=1,
+        clb.ax.set_title("Normalized evidence score", fontsize=16)
+        fig.suptitle(
+            f"The effect of differential analysis based on RAT data in {args.protein}",
+            fontsize=24,
         )
-
-        graph = build_graph(cysteines=cysteines, as_matrix=args.matrix)
-        gn, ge = nodes_edges_from_golden(graph, golden_bonds if kind == "AT" else [])
-        n, e = nodes_edges_from_data(graph, positive_evidence, alkylation_evidence)
-
-        im = draw(graph, gn, ge, axes[0], as_matrix=args.matrix)
-        draw(graph, n, e, axes[1], as_matrix=args.matrix)
-        if args.matrix:
-            cmap = plt.get_cmap("GnBu")
-        else:
-            cmap = plt.get_cmap("PiYG")
-    image_path = "../out/plots/{}_segments={}_breaks={}_perr={}_ferr={}{}.pdf".format(
-        args.protein,
-        args.prec_segments,
-        args.frag_breaks,
-        args.prec_error,
-        args.frag_error,
-        "" if args.code is None else f"_{args.code}",
-    )
-
-    fig.colorbar(
-        cm.ScalarMappable(cmap=cmap), ax=axs, shrink=0.3, orientation="horizontal"
-    )
-    fig.suptitle(f"Positions of disulfide bridges in {args.protein}", fontsize=24)
-    fig.savefig(
-        image_path,
-    )
+        fig.savefig(
+            image_path,
+        )
