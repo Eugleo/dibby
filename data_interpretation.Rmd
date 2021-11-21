@@ -16,7 +16,7 @@ LYS_BONDS <- c("(5, 126)", "(29, 114)", "(75, 93)", "(63, 79)")
 LYS_BONDS_NAMES <- c("var_has_5_126", "var_has_29_114", "var_has_75_93", "var_has_63_79")
 df <-
   read_delim(
-    "out/csv/fragment_matches_GENOVA_AT_segments=3_breaks=2_error=10ppm.csv",
+    "out/csv/fragment_matches_LYS_AT_segments=3_breaks=2_error=10ppm.csv",
     delim = ";"
   )
 df
@@ -134,7 +134,8 @@ df %>%
     frag_mod_count, frag_mod_count_median,
     frag_break_count, frag_break_count_median,
     frag_intensity_ratio, frag_intensity_ratio_median,
-    frag_disconnected_cys_count, frag_disconnected_cys_count_median
+    frag_disconnected_cys_count, frag_disconnected_cys_count_median,
+    ncol = 5
   )
 ```
 
